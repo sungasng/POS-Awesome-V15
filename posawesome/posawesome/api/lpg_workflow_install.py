@@ -32,7 +32,7 @@ STATES = [
     {"state": "Pending Head of Sales",  "doc_status": "0", "style": "Warning",   "update_field": None,                              "update_value": None},
     {"state": "Pending Head of Finance","doc_status": "0", "style": "Warning",   "update_field": None,                              "update_value": None},
     {"state": "Approved",               "doc_status": "1", "style": "Success",   "update_field": None,                              "update_value": None},
-    {"state": "Rejected",               "doc_status": "2", "style": "Danger",    "update_field": None,                              "update_value": None},
+    {"state": "Rejected",               "doc_status": "1", "style": "Danger",    "update_field": None,                              "update_value": None},
 ]
 
 ACTIONS = ("Approve", "Reject")
