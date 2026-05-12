@@ -13,7 +13,7 @@ Approval ladder:
     Plant Manager  -> Approve -> "Pending Head of Sales"
     Head of Sales  -> Approve -> "Pending Head of Finance"
     Head of Finance-> Approve -> "Approved" (auto-creates/updates the price tier)
-    Any approver  -> Reject  -> "Rejected"
+    Any approver  -> Reject  -> ""
 """
 
 from __future__ import annotations
