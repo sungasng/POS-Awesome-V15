@@ -21,6 +21,13 @@
 (function () {
         // Cache: { "item|customer|qty": {has_tier, rate, tier_name} }
         const TIER_CACHE = {};
+        // Per-row guard: prevents the rate change-handler from re-entering
+        // applyTierToRow while we are mid-write. Keyed by `${doctype}|${name}`.
+        const APPLYING = new Set();
+
+        function rowKey(row) {
+                return `${row.doctype}|${row.name}`;
+        }
 
         function cacheKey(item, customer, qty) {
                 return `${item || ""}|${customer || ""}|${qty || 0}`;
@@ -49,6 +56,7 @@
 
         function applyTierToRow(frm, row) {
                 if (!row || !row.item_code || !frm.doc.customer) return;
+                if (APPLYING.has(rowKey(row))) return; // re-entry guard
                 const qty = flt(row.qty) || 1;
                 fetchTier(row.item_code, frm.doc.customer, qty).then((info) => {
                         if (!info || !info.has_tier) return;
@@ -70,21 +78,32 @@
                                 // Re-read the row in case the user already changed item_code again.
                                 const live = locals[row.doctype] && locals[row.doctype][row.name];
                                 if (!live || live.item_code !== row.item_code) return;
+                                // Skip if ERPNext (or anyone) has already settled at the tier rate.
+                                if (flt(live.rate) === tierRate) {
+                                        lockRateField(frm, row);
+                                        return;
+                                }
 
-                                frappe.model.set_value(row.doctype, row.name, "price_list_rate", tierRate);
+                                const key = rowKey(row);
+                                APPLYING.add(key);
                                 frappe.model
-                                        .set_value(row.doctype, row.name, "rate", tierRate)
+                                        .set_value(row.doctype, row.name, "price_list_rate", tierRate)
+                                        .then(() =>
+                                                frappe.model.set_value(row.doctype, row.name, "rate", tierRate),
+                                        )
                                         .then(() => {
                                                 const existing = live.posa_offers || "";
                                                 const marker = `LPG-Tier:${info.tier_name}`;
                                                 if (!existing.includes(marker)) {
-                                                        frappe.model.set_value(
+                                                        return frappe.model.set_value(
                                                                 row.doctype,
                                                                 row.name,
                                                                 "posa_offers",
                                                                 (existing + "," + marker).replace(/^,+|,+$/g, ""),
                                                         );
                                                 }
+                                        })
+                                        .then(() => {
                                                 lockRateField(frm, row);
                                                 frappe.show_alert(
                                                         {
@@ -96,6 +115,11 @@
                                                         },
                                                         4,
                                                 );
+                                        })
+                                        .finally(() => {
+                                                // Release guard after a tick so the synchronous
+                                                // change-handlers fired by our set_value finish first.
+                                                setTimeout(() => APPLYING.delete(key), 50);
                                         });
                         }, 250);
                 });
