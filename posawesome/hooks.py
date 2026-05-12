@@ -321,6 +321,10 @@ fixtures = [
                     "Sales Order Item-posa_rate_per_kg",
                     "Sales Invoice-posa_receipt_barcode",
                     "POS Invoice-posa_receipt_barcode",
+                    "Sales Invoice Item-posa_amount_due",
+                    "POS Invoice Item-posa_amount_due",
+                    "Quotation Item-posa_amount_due",
+                    "Sales Order Item-posa_amount_due",
                 ),
             ]
         ],

@@ -1,43 +1,40 @@
 /**
- * POS Awesome — LPG Tier Pricing (Client-Side)
+ * POS Awesome — LPG Tier Pricing (Client-Side Notice)
  * --------------------------------------------------------------
- * Auto-applies the LPG Outlet Price Tier rate the instant the cashier
- * picks an item or changes the customer — BEFORE save.
+ * Shows a non-intrusive banner the moment a cashier picks an item
+ * with an applicable LPG Outlet Price Tier, so they can announce
+ * the correct rate to the customer BEFORE save.
  *
- * Eliminates the "announced wrong rate" UX bug where rate jumps from
- * price-list value to tier value only after Save.
+ * Why a banner instead of mutating the rate field?
+ *   ERPNext's `get_item_details` + pricing pipeline aggressively
+ *   refetches the price-list rate every time `rate`, `qty`, or
+ *   `item_code` changes. Fighting it with `frappe.model.set_value`
+ *   creates a feedback loop that ends with rate=0.
  *
- * Also locks the rate field for tier-managed rows (defense in depth)
- * so a cashier cannot manually override a board-approved price.
+ *   The server-side validate hook (apply_tiered_pricing) overrides
+ *   the rate on save with 100% reliability — proven by the bench
+ *   diagnostic (server: rate=3000, amount=37500).
  *
- * Wired in hooks.py:
- *     doctype_js = {
- *         "Sales Invoice": "...",
- *         "Quotation": "...",
- *         "Sales Order": "...",
- *     }
+ *   So the only UX gap is "what does the cashier SEE before save?"
+ *   This banner closes that gap without touching the form state.
+ *
+ * Banner content:
+ *   "Tier price applies: <tier_name> -> N3,000 per unit
+ *    (current display N1,360 is the standard price-list rate;
+ *    final invoice will use the tier rate)."
  */
 
 (function () {
-        // Cache: { "item|customer|qty": {has_tier, rate, tier_name} }
         const TIER_CACHE = {};
-
-        function cacheKey(item, customer, qty) {
-                return `${item || ""}|${customer || ""}|${qty || 0}`;
-        }
 
         function fetchTier(itemCode, customer, qty) {
                 if (!itemCode || !customer) return Promise.resolve(null);
-                const key = cacheKey(itemCode, customer, qty);
+                const key = `${itemCode}|${customer}|${qty || 0}`;
                 if (TIER_CACHE[key]) return Promise.resolve(TIER_CACHE[key]);
                 return frappe
                         .call({
                                 method: "posawesome.posawesome.api.lpg_pricing.get_tier_rate",
-                                args: {
-                                        item_code: itemCode,
-                                        customer,
-                                        qty: qty || 0,
-                                },
+                                args: { item_code: itemCode, customer, qty: qty || 0 },
                                 freeze: false,
                         })
                         .then((r) => {
@@ -47,101 +44,104 @@
                         });
         }
 
-        function applyTierToRow(frm, row) {
-                if (!row || !row.item_code || !frm.doc.customer) return;
-                const qty = flt(row.qty) || 1;
-                fetchTier(row.item_code, frm.doc.customer, qty).then((info) => {
-                        if (!info || !info.has_tier) return;
-                        const tierRate = flt(info.rate);
-                        if (!tierRate || flt(row.rate) === tierRate) {
-                                // Still lock the row even if already at tier rate.
-                                lockRateField(frm, row);
+        function bannerEl(frm) {
+                // Reuse a single banner div per form instance.
+                let el = frm.$wrapper.find(".posa-tier-banner");
+                if (el.length === 0) {
+                        el = $(
+                                '<div class="posa-tier-banner alert alert-info" ' +
+                                        'style="margin: 8px 0; display: none; ' +
+                                        'border-left: 4px solid #2196f3; ' +
+                                        'background: #e3f2fd; color: #0d47a1; ' +
+                                        'padding: 10px 16px; font-size: 14px;">' +
+                                        "</div>",
+                        );
+                        // Insert above the Items grid.
+                        const itemsField = frm.fields_dict.items;
+                        if (itemsField && itemsField.$wrapper) {
+                                el.insertBefore(itemsField.$wrapper);
+                        } else {
+                                frm.$wrapper.find(".form-section").first().prepend(el);
+                        }
+                }
+                return el;
+        }
+
+        function refreshBanner(frm) {
+                const el = bannerEl(frm);
+                if (!frm.doc.customer || !frm.doc.items || !frm.doc.items.length) {
+                        el.hide().empty();
+                        return;
+                }
+
+                // Collect tier info for every row in parallel.
+                const promises = frm.doc.items.map((row) =>
+                        fetchTier(row.item_code, frm.doc.customer, row.qty || 1).then((info) => ({
+                                row,
+                                info,
+                        })),
+                );
+
+                Promise.all(promises).then((results) => {
+                        const tiered = results.filter((r) => r.info && r.info.has_tier);
+                        if (tiered.length === 0) {
+                                el.hide().empty();
                                 return;
                         }
-                        // Use frappe.model.set_value so amount / totals recalculate.
-                        frappe.model.set_value(row.doctype, row.name, "price_list_rate", tierRate);
-                        frappe.model.set_value(row.doctype, row.name, "rate", tierRate).then(() => {
-                                // Stamp marker for traceability (mirrors server-side stamping).
-                                const existing = row.posa_offers || "";
-                                const marker = `LPG-Tier:${info.tier_name}`;
-                                if (!existing.includes(marker)) {
-                                        frappe.model.set_value(
-                                                row.doctype,
-                                                row.name,
-                                                "posa_offers",
-                                                (existing + "," + marker).replace(/^,+|,+$/g, ""),
+
+                        const lines = tiered.map(({ row, info }) => {
+                                const tierRate = Number(info.rate || 0);
+                                const currentRate = Number(row.rate || 0);
+                                const tierFmt = `₦${tierRate.toLocaleString("en-NG")}`;
+                                const currentFmt = `₦${currentRate.toLocaleString("en-NG")}`;
+                                const same = Math.abs(tierRate - currentRate) < 0.005;
+                                if (same) {
+                                        return (
+                                                `<div><b>${frappe.utils.escape_html(row.item_code)}</b>: ` +
+                                                `tier price <b>${tierFmt}</b> applied ` +
+                                                `<small>(${frappe.utils.escape_html(info.tier_name)})</small></div>`
                                         );
                                 }
-                                lockRateField(frm, row);
-                                // Toast for transparency (so cashier doesn't think the
-                                // system silently changed their input).
-                                frappe.show_alert(
-                                        {
-                                                message: __("LPG tier rate applied: {0} → ₦{1}", [
-                                                        info.tier_name,
-                                                        tierRate.toLocaleString("en-NG"),
-                                                ]),
-                                                indicator: "blue",
-                                        },
-                                        4,
+                                return (
+                                        `<div><b>${frappe.utils.escape_html(row.item_code)}</b>: ` +
+                                        `tier price will be <b>${tierFmt}</b> on save ` +
+                                        `<small>(showing ${currentFmt} = standard price list. ` +
+                                        `Tier: ${frappe.utils.escape_html(info.tier_name)})</small></div>`
                                 );
                         });
+
+                        el.html(
+                                '<div style="font-weight: 600; margin-bottom: 4px;">' +
+                                        __("LPG tier pricing in effect for this customer:") +
+                                        "</div>" +
+                                        lines.join(""),
+                        ).show();
                 });
         }
 
-        function lockRateField(frm, row) {
-                // Make the rate cell read-only at the row level.
-                // The grid API only exposes per-column toggle, so we set the
-                // row-level read_only flag on the field via the grid_row API.
-                try {
-                        const grid = frm.fields_dict.items && frm.fields_dict.items.grid;
-                        if (!grid) return;
-                        const gridRow = grid.grid_rows_by_docname[row.name];
-                        if (!gridRow) return;
-                        ["rate", "price_list_rate"].forEach((fname) => {
-                                if (gridRow.docfields) {
-                                        gridRow.docfields.forEach((df) => {
-                                                if (df.fieldname === fname) {
-                                                        df.read_only = 1;
-                                                }
-                                        });
-                                }
-                        });
-                        gridRow.refresh_field && gridRow.refresh_field("rate");
-                        gridRow.refresh_field && gridRow.refresh_field("price_list_rate");
-                } catch (e) {
-                        // Non-fatal — if locking fails the server-side validate still enforces tier.
-                        console.warn("[lpg_tier] could not lock rate field:", e);
-                }
-        }
-
-        function applyTierToAllRows(frm) {
-                if (!frm || !frm.doc || !frm.doc.customer) return;
-                (frm.doc.items || []).forEach((row) => applyTierToRow(frm, row));
+        // Throttle so we don't spam the API while user types qty.
+        let throttleTimer = null;
+        function scheduleRefresh(frm) {
+                if (throttleTimer) clearTimeout(throttleTimer);
+                throttleTimer = setTimeout(() => refreshBanner(frm), 300);
         }
 
         const FORM_HANDLERS = {
-                customer: function (frm) {
-                        // Re-check every row when customer changes (different group/territory).
-                        applyTierToAllRows(frm);
-                },
-                refresh: function (frm) {
-                        // On reopen of a saved doc, re-lock tier-managed rows.
-                        applyTierToAllRows(frm);
-                },
+                customer: scheduleRefresh,
+                refresh: scheduleRefresh,
+                items_add: scheduleRefresh,
+                items_remove: scheduleRefresh,
         };
 
         const ROW_HANDLERS = {
-                item_code: function (frm, cdt, cdn) {
-                        applyTierToRow(frm, locals[cdt][cdn]);
+                item_code: function (frm) {
+                        scheduleRefresh(frm);
                 },
-                qty: function (frm, cdt, cdn) {
-                        // Qty can shift which tier bracket applies (e.g. 50+ kg → bulk tier).
-                        applyTierToRow(frm, locals[cdt][cdn]);
+                qty: function (frm) {
+                        scheduleRefresh(frm);
                 },
         };
 
-        // Wire up the same handlers on all four sales doctypes.
         ["Sales Invoice", "POS Invoice", "Quotation", "Sales Order"].forEach((parentDt) => {
                 frappe.ui.form.on(parentDt, FORM_HANDLERS);
         });
