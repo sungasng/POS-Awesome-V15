@@ -531,4 +531,19 @@ def main():
         sys.exit(1)
 
 
+# When run via `bench execute "exec(open('...').read())"`, Frappe invokes us
+# inside an eval() that supplies *separate* globals and locals dicts. That
+# means our top-level `def` statements land in `locals()`, but `main.__globals__`
+# still points at Frappe's command-module globals — so `main()` can't see
+# `_record`, `test_feature_1_tiered_pricing`, etc.
+#
+# Copy our locals into globals so name lookup inside main() succeeds.
+try:
+    _g = globals()
+    for _k, _v in list(locals().items()):
+        if _k not in _g:
+            _g[_k] = _v
+except Exception:
+    pass
+
 main()
