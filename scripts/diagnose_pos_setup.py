@@ -173,4 +173,16 @@ def main():
     sys.exit(0)
 
 
+# bench execute runs us via eval(..., globals(), locals()), which puts
+# our top-level defs in locals() while main.__globals__ stays as Frappe's
+# command-module globals — so NameError on _section. Copy locals into
+# globals just before main() to fix scope.
+try:
+    _g = globals()
+    for _k, _v in list(locals().items()):
+        if _k not in _g:
+            _g[_k] = _v
+except Exception:
+    pass
+
 main()
