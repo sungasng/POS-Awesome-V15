@@ -124,6 +124,67 @@ def _existing_users() -> list[str]:
     return users
 
 
+def _pick_cash_account() -> str:
+    """Find a sensible default Cash account on SCL's chart of accounts."""
+    # Preference order: account_type=Cash, then anything named 'Cash - <abbr>'.
+    abbr = frappe.db.get_value("Company", COMPANY, "abbr") or "SCL"
+    rows = frappe.get_all(
+        "Account",
+        filters={
+            "company": COMPANY,
+            "is_group": 0,
+            "account_type": "Cash",
+        },
+        pluck="name",
+        order_by="name",
+        limit=1,
+    )
+    if rows:
+        return rows[0]
+    # fallback: any leaf account named like 'Cash - <abbr>' or 'Cash'
+    rows = frappe.get_all(
+        "Account",
+        filters={
+            "company": COMPANY,
+            "is_group": 0,
+            "name": ["like", "%Cash%"],
+        },
+        pluck="name",
+        order_by="name",
+        limit=1,
+    )
+    if rows:
+        return rows[0]
+    raise RuntimeError(
+        f"No Cash account found on {COMPANY}. "
+        f"Create one (e.g. 'Cash - {abbr}') before re-running."
+    )
+
+
+def _ensure_mop_default_account(mop_name: str, default_cash_account: str):
+    """
+    Make sure the Mode of Payment has a `default account` row for `COMPANY`.
+    ERPNext POS Profile validation rejects any MoP that doesn't have one.
+    """
+    mop = frappe.get_doc("Mode of Payment", mop_name)
+    existing = next(
+        (a for a in (mop.accounts or []) if a.company == COMPANY),
+        None,
+    )
+    if existing:
+        if not existing.default_account:
+            existing.default_account = default_cash_account
+            mop.save(ignore_permissions=True)
+            print(f"  PATCHED {mop_name}: default_account -> {default_cash_account}")
+        return
+    mop.append("accounts", {
+        "company": COMPANY,
+        "default_account": default_cash_account,
+    })
+    mop.save(ignore_permissions=True)
+    print(f"  PATCHED {mop_name}: added default_account row for {COMPANY} -> {default_cash_account}")
+
+
 def main():
     print("=" * 70)
     print(f" Create POS Profile: {PROFILE_NAME}")
@@ -132,6 +193,14 @@ def main():
     _verify_prereqs()
     cost_center = _pick_cost_center()
     print(f"  Using cost center: {cost_center}")
+
+    cash_account = _pick_cash_account()
+    print(f"  Using default cash account: {cash_account}")
+
+    # Ensure each Mode of Payment used in this profile has a default account
+    # for SCL — otherwise POS Profile.validate() rejects the profile.
+    for mop, _, _ in PAYMENTS:
+        _ensure_mop_default_account(mop, cash_account)
 
     users = _existing_users()
     print(f"  Applicable users ({len(users)}): {', '.join(users)}")
