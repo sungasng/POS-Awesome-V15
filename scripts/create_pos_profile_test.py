@@ -124,6 +124,54 @@ def _existing_users() -> list[str]:
     return users
 
 
+def _pick_account_by(preferences: list[dict]) -> str | None:
+    """Try a sequence of Account filter dicts; return the first non-empty match."""
+    for filters in preferences:
+        base = {"company": COMPANY, "is_group": 0, "disabled": 0}
+        base.update(filters)
+        rows = frappe.get_all(
+            "Account", filters=base, pluck="name", order_by="name", limit=1
+        )
+        if rows:
+            return rows[0]
+    return None
+
+
+def _pick_writeoff_account(cash_account: str) -> str:
+    """Pick a reasonable Write Off account for the POS Profile."""
+    # 1. Company-level default if set.
+    val = frappe.db.get_value("Company", COMPANY, "write_off_account")
+    if val:
+        return val
+    # 2. Any Round Off account.
+    val = _pick_account_by([{"account_type": "Round Off"}])
+    if val:
+        return val
+    # 3. Any leaf account named like 'Write Off' / 'Discount Allowed'.
+    val = _pick_account_by([
+        {"name": ["like", "%Write Off%"]},
+        {"account_name": ["like", "%Write Off%"]},
+        {"name": ["like", "%Discount Allowed%"]},
+        {"account_name": ["like", "%Discount Allowed%"]},
+    ])
+    if val:
+        return val
+    # 4. First Expense leaf account.
+    val = _pick_account_by([{"root_type": "Expense"}])
+    if val:
+        return val
+    # 5. Last resort — use cash account (accounting-wise incorrect, but
+    # unblocks the test profile).
+    return cash_account
+
+
+def _pick_change_amount_account(cash_account: str) -> str:
+    """`account_for_change_amount` defaults to a Cash account; reuse the
+    same cash account if Company hasn't pinned one."""
+    val = frappe.db.get_value("Company", COMPANY, "default_cash_account")
+    return val or cash_account
+
+
 def _pick_cash_account() -> str:
     """Find a sensible default Cash account on SCL's chart of accounts."""
     # Preference order: account_type=Cash, then anything named 'Cash - <abbr>'.
@@ -197,6 +245,11 @@ def main():
     cash_account = _pick_cash_account()
     print(f"  Using default cash account: {cash_account}")
 
+    writeoff_account = _pick_writeoff_account(cash_account)
+    change_amount_account = _pick_change_amount_account(cash_account)
+    print(f"  Using write-off account  : {writeoff_account}")
+    print(f"  Using change-amt account : {change_amount_account}")
+
     # Ensure each Mode of Payment used in this profile has a default account
     # for SCL — otherwise POS Profile.validate() rejects the profile.
     for mop, _, _ in PAYMENTS:
@@ -225,6 +278,12 @@ def main():
         prof.currency = CURRENCY
         prof.customer_group = CUSTOMER_GROUP
         prof.territory = TERRITORY
+        prof.write_off_account = writeoff_account
+        prof.write_off_cost_center = cost_center
+        prof.account_for_change_amount = change_amount_account
+        prof.income_account = frappe.db.get_value(
+            "Company", COMPANY, "default_income_account"
+        )
         prof.disabled = 0
         prof.save(ignore_permissions=True)
         action = "UPDATED"
@@ -239,8 +298,12 @@ def main():
             "selling_price_list": PRICE_LIST,
             "customer_group": CUSTOMER_GROUP,
             "territory": TERRITORY,
-            "write_off_account": frappe.db.get_value("Company", COMPANY, "write_off_account"),
+            "write_off_account": writeoff_account,
             "write_off_cost_center": cost_center,
+            "account_for_change_amount": change_amount_account,
+            "income_account": frappe.db.get_value(
+                "Company", COMPANY, "default_income_account"
+            ),
             "disabled": 0,
             "applicable_for_users": [{"user": u} for u in users],
             "payments": payment_rows,
