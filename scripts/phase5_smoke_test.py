@@ -218,6 +218,100 @@ def test_feature_1_tiered_pricing():
         _record("1c apply_tiered_pricing", False, f"exception: {e}")
 
 
+# ---------------------------------------------------------------------------
+# Feature 2 — ₦ ↔ Kg / Amount-Due sync (cash-change scenario)
+# ---------------------------------------------------------------------------
+def test_feature_2_amount_due():
+    print("\n[2] Amount Due (cash-change) sync")
+    from posawesome.posawesome.api.posa_kg_calc import sync_kg_fields
+
+    # Confirm the custom field exists on Sales Invoice Item.
+    has_field = frappe.db.exists(
+        "Custom Field", "Sales Invoice Item-posa_amount_due"
+    )
+    _record(
+        "2 prereq: posa_amount_due custom field installed on Sales Invoice Item",
+        bool(has_field),
+        "run `bench --site <site> migrate` if missing",
+    )
+    if not has_field:
+        return
+
+    _ensure_customer_group()
+    _ensure_territory()
+    _ensure_item()
+    customer = _ensure_customer(TEST_CUSTOMER, TEST_RAW_PHONE)
+
+    def _new_si(qty=0, rate=0, posa_amount_due=0):
+        si = frappe.new_doc("Sales Invoice")
+        si.customer = customer.name
+        si.posting_date = today()
+        si.due_date = today()
+        si.append("items", {
+            "item_code": TEST_ITEM,
+            "qty": qty,
+            "rate": rate,
+            "price_list_rate": rate,
+            "uom": "Nos",
+            "conversion_factor": 1,
+            "posa_amount_due": posa_amount_due,
+        })
+        return si
+
+    # 2a — qty drives amount_due
+    si = _new_si(qty=5, rate=1360)
+    sync_kg_fields(si)
+    row = si.items[0]
+    _record(
+        "2a qty=5, rate=1360 -> posa_amount_due=6800",
+        flt(row.posa_amount_due) == 6800.0,
+        f"got posa_amount_due={row.posa_amount_due}",
+    )
+
+    # 2b — amount_due drives qty
+    si = _new_si(qty=1, rate=1360, posa_amount_due=2000)
+    sync_kg_fields(si)
+    row = si.items[0]
+    _record(
+        "2b posa_amount_due=2000, rate=1360 -> qty=1.471",
+        flt(row.qty) == 1.471,
+        f"got qty={row.qty}",
+    )
+
+    # 2c — round-trip: after amount-driven qty rewrite, posa_amount_due
+    # re-anchors to flt(qty * rate, 2) so receipts match exactly.
+    expected = flt(1.471 * 1360, 2)
+    _record(
+        "2c amount_due re-anchored after qty rewrite",
+        flt(row.posa_amount_due) == expected,
+        f"got posa_amount_due={row.posa_amount_due}, expected={expected}",
+    )
+
+    # 2d — rate=0 must not divide by zero or rewrite qty.
+    si = _new_si(qty=3, rate=0, posa_amount_due=2000)
+    sync_kg_fields(si)
+    row = si.items[0]
+    _record(
+        "2d rate=0 short-circuits (no div-by-zero, qty unchanged)",
+        flt(row.qty) == 3.0,
+        f"qty={row.qty}",
+    )
+
+    # 2e — legacy display mirror: posa_kg_qty == qty for Kg-uom items.
+    si = _new_si(qty=4.5, rate=1360)
+    sync_kg_fields(si)
+    row = si.items[0]
+    ok_mirror = (
+        flt(getattr(row, "posa_kg_qty", 0)) == 4.5
+        and flt(getattr(row, "posa_rate_per_kg", 0)) == 1360.0
+    )
+    _record(
+        "2e legacy posa_kg_qty / posa_rate_per_kg mirror qty / rate",
+        ok_mirror,
+        f"kg_qty={getattr(row, 'posa_kg_qty', None)} rate_per_kg={getattr(row, 'posa_rate_per_kg', None)}",
+    )
+
+
 
 # ---------------------------------------------------------------------------
 # Feature 4 — Price Change Workflow (3-stage approval)
@@ -502,6 +596,12 @@ def main():
         traceback.print_exc()
 
     try:
+        test_feature_2_amount_due()
+    except Exception as e:
+        _record("2 Amount Due (suite)", False, f"exception: {e}")
+        traceback.print_exc()
+
+    try:
         test_feature_4_workflow()
     except Exception as e:
         _record("4 Workflow (suite)", False, f"exception: {e}")
@@ -532,8 +632,11 @@ def main():
         print(f"  [{flag}] {name}" + (f"  --  {detail}" if detail and not ok else ""))
     print(f"\n  Total: {len(RESULTS)}   Passed: {passed}   Failed: {failed}")
     print("=" * 72)
-    if failed:
-        sys.exit(1)
+    # bench execute appends "(*args, **kwargs)" to whatever expression it ran;
+    # since exec(...) returns None, the trailing call would raise NoneType
+    # is not callable. Exit cleanly here so the failure summary is the last
+    # thing the operator sees.
+    sys.exit(0 if failed == 0 else 1)
 
 
 # When run via `bench execute "exec(open('...').read())"`, Frappe invokes us

@@ -262,7 +262,13 @@
 											class="pos-themed-input"
 											hide-details
 											:model-value="memoizedFormatCurrency(item.qty * item.rate)"
-											disabled
+											@change="handleAmountDueChange(item, $event)"
+											:disabled="
+												!pos_profile.posa_allow_user_to_edit_rate ||
+												!!item.posa_is_replace ||
+												!!item.posa_offer_applied ||
+												!(item.rate > 0)
+											"
 											prepend-inner-icon="mdi-calculator"
 										></v-text-field>
 									</div>
@@ -1224,6 +1230,28 @@ export default {
 				// Use the existing setFormatedQty function for non-zero values
 				this.setFormatedQty(item, "qty", null, false, event.target.value);
 			}
+		},
+
+		// Phase-5 Feature: ₦ ↔ Kg amount-due calculator
+		// Cashier types a cash amount into the Total Amount field.
+		// Compute qty = amount / rate (3 dp) and feed it through the
+		// existing qty pipeline so totals, taxes and discounts recompute.
+		handleAmountDueChange(item, event) {
+			const raw = (event && event.target && event.target.value) || "";
+			// Strip currency formatting (commas, spaces, ₦).
+			const amount = parseFloat(String(raw).replace(/[^0-9.\-]/g, "")) || 0;
+			const rate = parseFloat(item.rate) || 0;
+			if (rate <= 0) {
+				// Can't divide by zero — re-render the field at its computed value.
+				return;
+			}
+			if (amount <= 0) {
+				// Treat 0 / negative the same as setting qty 0 → remove row.
+				this.removeItem(item);
+				return;
+			}
+			const newQty = Math.round((amount / rate) * 1000) / 1000;
+			this.setFormatedQty(item, "qty", null, false, newQty);
 		},
 		handleMinusClick(item) {
 			if (this.isReturnInvoice) {
