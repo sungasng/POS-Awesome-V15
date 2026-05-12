@@ -53,39 +53,51 @@
                 fetchTier(row.item_code, frm.doc.customer, qty).then((info) => {
                         if (!info || !info.has_tier) return;
                         const tierRate = flt(info.rate);
-                        if (!tierRate || flt(row.rate) === tierRate) {
-                                // Still lock the row even if already at tier rate.
+                        if (!tierRate) return;
+
+                        if (flt(row.rate) === tierRate) {
+                                // Already at tier rate — just ensure lock state.
                                 lockRateField(frm, row);
                                 return;
                         }
-                        // Use frappe.model.set_value so amount / totals recalculate.
-                        frappe.model.set_value(row.doctype, row.name, "price_list_rate", tierRate);
-                        frappe.model.set_value(row.doctype, row.name, "rate", tierRate).then(() => {
-                                // Stamp marker for traceability (mirrors server-side stamping).
-                                const existing = row.posa_offers || "";
-                                const marker = `LPG-Tier:${info.tier_name}`;
-                                if (!existing.includes(marker)) {
-                                        frappe.model.set_value(
-                                                row.doctype,
-                                                row.name,
-                                                "posa_offers",
-                                                (existing + "," + marker).replace(/^,+|,+$/g, ""),
-                                        );
-                                }
-                                lockRateField(frm, row);
-                                // Toast for transparency (so cashier doesn't think the
-                                // system silently changed their input).
-                                frappe.show_alert(
-                                        {
-                                                message: __("LPG tier rate applied: {0} → ₦{1}", [
-                                                        info.tier_name,
-                                                        tierRate.toLocaleString("en-NG"),
-                                                ]),
-                                                indicator: "blue",
-                                        },
-                                        4,
-                                );
-                        });
+
+                        // Delay our write until ERPNext's get_item_details / pricing
+                        // pipeline has finished. Without the delay our set_value
+                        // arrives BEFORE ERPNext's price_list_rate handler, which
+                        // then clobbers our tier rate. 250 ms is conservative for
+                        // the typical Frappe async chain (~50-150 ms).
+                        setTimeout(() => {
+                                // Re-read the row in case the user already changed item_code again.
+                                const live = locals[row.doctype] && locals[row.doctype][row.name];
+                                if (!live || live.item_code !== row.item_code) return;
+
+                                frappe.model.set_value(row.doctype, row.name, "price_list_rate", tierRate);
+                                frappe.model
+                                        .set_value(row.doctype, row.name, "rate", tierRate)
+                                        .then(() => {
+                                                const existing = live.posa_offers || "";
+                                                const marker = `LPG-Tier:${info.tier_name}`;
+                                                if (!existing.includes(marker)) {
+                                                        frappe.model.set_value(
+                                                                row.doctype,
+                                                                row.name,
+                                                                "posa_offers",
+                                                                (existing + "," + marker).replace(/^,+|,+$/g, ""),
+                                                        );
+                                                }
+                                                lockRateField(frm, row);
+                                                frappe.show_alert(
+                                                        {
+                                                                message: __("LPG tier rate applied: {0} → ₦{1}", [
+                                                                        info.tier_name,
+                                                                        tierRate.toLocaleString("en-NG"),
+                                                                ]),
+                                                                indicator: "blue",
+                                                        },
+                                                        4,
+                                                );
+                                        });
+                        }, 250);
                 });
         }
 
@@ -137,6 +149,16 @@
                 },
                 qty: function (frm, cdt, cdn) {
                         // Qty can shift which tier bracket applies (e.g. 50+ kg → bulk tier).
+                        applyTierToRow(frm, locals[cdt][cdn]);
+                },
+                // After ERPNext's pricing pipeline updates price_list_rate, our
+                // earlier set_value may have been clobbered. Re-apply tier rate here.
+                price_list_rate: function (frm, cdt, cdn) {
+                        applyTierToRow(frm, locals[cdt][cdn]);
+                },
+                rate: function (frm, cdt, cdn) {
+                        // Last line of defense — if anything (user typing, pricing rule,
+                        // get_item_details) drops the rate off the tier value, re-pin it.
                         applyTierToRow(frm, locals[cdt][cdn]);
                 },
         };
