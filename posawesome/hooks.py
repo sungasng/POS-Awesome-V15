@@ -20,6 +20,7 @@ _asset_version = get_build_version()
 app_include_js = [
     f"/assets/posawesome/dist/js/loader.js?v={_asset_version}",
     f"/assets/posawesome/js/posa_kg_calculator.js?v={_asset_version}",
+    f"/assets/posawesome/js/posa_tier_pricing.js?v={_asset_version}",
 ]
 
 app_include_css = [

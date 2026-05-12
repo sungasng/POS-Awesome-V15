@@ -92,6 +92,10 @@ def apply_tiered_pricing(doc, method=None):
     """
     Document-level entry. Iterates rows of doc.items and overrides `rate`
     whenever a tier matches. Safe to call on every validate.
+
+    After overriding any row, recomputes amounts/taxes/totals so the
+    grand total reflects the tier rate — otherwise the form would
+    display tier rate but stale amount (12.5 x 3000 shown as 17,000).
     """
     if not getattr(doc, "items", None):
         return
@@ -104,6 +108,8 @@ def apply_tiered_pricing(doc, method=None):
     if not customer_group or not territory:
         # Cannot resolve tier without both — leave native pricing in place.
         return
+
+    any_rate_changed = False
 
     for row in doc.items:
         tier = find_applicable_tier(
@@ -124,6 +130,7 @@ def apply_tiered_pricing(doc, method=None):
         if flt(getattr(row, "rate", 0)) != tier_rate:
             row.price_list_rate = tier_rate
             row.rate = tier_rate
+            any_rate_changed = True
             # Stamp where the rate came from for traceability.
             if hasattr(row, "posa_offers"):
                 # Append tier ref to existing offers field (without clobbering coupons).
@@ -131,6 +138,11 @@ def apply_tiered_pricing(doc, method=None):
                 marker = f"LPG-Tier:{tier['name']}"
                 if marker not in existing:
                     row.posa_offers = (existing + "," + marker).strip(",")
+
+    if any_rate_changed and hasattr(doc, "calculate_taxes_and_totals"):
+        # Triggers ERPNext's standard amount/tax/grand-total recalculation
+        # so the displayed totals reflect the tier rate.
+        doc.calculate_taxes_and_totals()
 
 
 @frappe.whitelist()
