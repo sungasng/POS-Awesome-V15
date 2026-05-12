@@ -167,4 +167,16 @@ def main():
     sys.exit(0 if not errors else 1)
 
 
+# bench execute runs us via eval(method, globals(), locals()) which separates
+# the two dicts. Top-level `def`s land in locals, but main.__globals__ points
+# at Frappe's command-module globals — so main()'s call to `_template_role_list`
+# / `_split_name` fails with NameError. Copy locals into globals to fix scope.
+try:
+    _g = globals()
+    for _k, _v in list(locals().items()):
+        if _k not in _g:
+            _g[_k] = _v
+except Exception:
+    pass
+
 main()
