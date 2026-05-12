@@ -10,3 +10,4 @@ posawesome.patches.recreate_pos_awesome_workspace
 posawesome.patches.add_posa_kg_calculator_fields
 posawesome.patches.add_phase5_customizations
 posawesome.patches.add_amount_due_field
+posawesome.patches.fix_amount_due_editable
