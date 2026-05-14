@@ -169,3 +169,86 @@ def get_tier_rate(item_code: str, customer: str, qty: float = 0, posting_date: s
         "min_qty": flt(tier.get("min_qty") or 0),
         "max_qty": flt(tier.get("max_qty") or 0),
     }
+
+
+@frappe.whitelist()
+def get_tier_rates_bulk(items, customer: str, posting_date: str = None) -> dict:
+    """
+    Batched variant. POS Awesome calls this once whenever the customer changes
+    or a new item is added.
+
+    Args:
+        items: list[dict] with keys {item_code, qty}. Accepts a JSON string too.
+        customer: customer name.
+        posting_date: optional ISO date.
+
+    Returns:
+        {
+            "customer_group": <str>,
+            "territory":      <str>,
+            "rows": [
+                {
+                    "item_code": "...",
+                    "qty": <float>,
+                    "has_tier": True/False,
+                    "tier_name": "...",     # only if has_tier
+                    "rate": <float>,         # only if has_tier
+                    "currency": "NGN",
+                    ...
+                },
+                ...
+            ],
+            "all_have_tier": <bool>      # convenience for the cashier UI
+        }
+    """
+    import json
+    if isinstance(items, str):
+        try:
+            items = json.loads(items)
+        except Exception:
+            items = []
+    if not isinstance(items, list):
+        items = []
+
+    meta = _get_customer_meta(customer) if customer else {}
+    rows = []
+    all_have_tier = True
+    for row in items:
+        if not isinstance(row, dict):
+            continue
+        item_code = row.get("item_code")
+        if not item_code:
+            continue
+        tier = find_applicable_tier(
+            item_code=item_code,
+            customer_group=meta.get("customer_group"),
+            territory=meta.get("territory"),
+            qty=flt(row.get("qty") or 0),
+            posting_date=posting_date,
+        )
+        if tier:
+            rows.append({
+                "item_code": item_code,
+                "qty": flt(row.get("qty") or 0),
+                "has_tier": True,
+                "tier_name": tier["name"],
+                "rate": flt(tier["rate"]),
+                "currency": tier["currency"],
+                "min_qty": flt(tier.get("min_qty") or 0),
+                "max_qty": flt(tier.get("max_qty") or 0),
+            })
+        else:
+            all_have_tier = False
+            rows.append({
+                "item_code": item_code,
+                "qty": flt(row.get("qty") or 0),
+                "has_tier": False,
+            })
+    return {
+        "customer": customer,
+        "customer_group": meta.get("customer_group"),
+        "territory": meta.get("territory"),
+        "rows": rows,
+        "all_have_tier": all_have_tier,
+    }
+

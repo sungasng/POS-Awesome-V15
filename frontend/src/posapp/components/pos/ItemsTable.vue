@@ -168,11 +168,7 @@
 												setFormatedCurrency(item, 'rate', null, false, $event),
 												calcPrices(item, $event.target.value, $event),
 											]"
-											:disabled="
-												!pos_profile.posa_allow_user_to_edit_rate ||
-												!!item.posa_is_replace ||
-												!!item.posa_offer_applied
-											"
+											:disabled="true"
 											prepend-inner-icon="mdi-currency-usd"
 										></v-text-field>
 									</div>
@@ -264,7 +260,6 @@
 											:model-value="memoizedFormatCurrency(item.qty * item.rate)"
 											@change="handleAmountDueChange(item, $event)"
 											:disabled="
-												!pos_profile.posa_allow_user_to_edit_rate ||
 												!!item.posa_is_replace ||
 												!!item.posa_offer_applied ||
 												!(item.rate > 0)

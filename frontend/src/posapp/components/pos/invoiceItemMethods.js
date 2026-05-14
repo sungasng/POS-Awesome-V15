@@ -1448,6 +1448,17 @@ export default {
 			}
 		}
 
+		// Sungas Phase-5: if a customer is already selected, immediately apply the
+		// customer's LPG Outlet Price Tier rate to this freshly-added row so the
+		// cashier never sees the wrong rate (1360 default) flash before tier.
+		if (this.customer) {
+			try {
+				await this.apply_tier_pricing_to_cart();
+			} catch (e) {
+				console.error("post-add_item tier apply failed", e);
+			}
+		}
+
 		return res;
 	},
 
@@ -3197,6 +3208,28 @@ export default {
 				return;
 			}
 
+			// Sungas Phase-5: re-confirm every cart row still has a tier rate.
+			// (Stock items may have changed customer between adds; this is the
+			// last gate before the cashier sees the Payments screen.)
+			try {
+				const result = await this.apply_tier_pricing_to_cart();
+				const missing = (this.items || []).filter((it) => it._no_tier === true);
+				if (missing.length) {
+					this.eventBus.emit("show_message", {
+						title: __("No tier rate"),
+						detail: __(
+							"Items {0} have no LPG Outlet Price Tier configured for {1}. Cannot PAY.",
+							[missing.map((x) => x.item_code).join(", "), this.customer],
+						),
+						color: "error",
+						groupId: "pay-no-tier",
+					});
+					return;
+				}
+			} catch (e) {
+				console.error("Tier validation before PAY failed", e);
+			}
+
 			console.log("Basic validations passed, proceeding to main validation");
 			const isValid = this.validate();
 			console.log("Main validation result:", isValid);
@@ -4169,6 +4202,77 @@ export default {
 		} catch (error) {
 			console.error("Failed to fetch customer details", error);
 		}
+		// Sungas Phase-5: re-apply LPG Outlet Price Tier rates to every cart
+		// row using the new customer's group/territory.
+		try {
+			await vm.apply_tier_pricing_to_cart();
+		} catch (error) {
+			console.error("apply_tier_pricing_to_cart failed", error);
+		}
+	},
+
+	// Sungas Phase-5: fetch LPG Outlet Price Tier rates for every cart row
+	// in one round-trip, mutate item.rate in place, and emit a banner if any
+	// row has no tier configured for this customer.
+	async apply_tier_pricing_to_cart() {
+		if (!this.customer) return { all_have_tier: false, skipped: "no-customer" };
+		const items = this.items || [];
+		if (!items.length) return { all_have_tier: true, rows: [] };
+
+		const payload = items.map((it) => ({
+			item_code: it.item_code,
+			qty: it.qty,
+		}));
+		let r;
+		try {
+			r = await frappe.call({
+				method: "posawesome.posawesome.api.lpg_pricing.get_tier_rates_bulk",
+				args: {
+					items: JSON.stringify(payload),
+					customer: this.customer,
+					posting_date: this.invoice_doc?.posting_date || null,
+				},
+			});
+		} catch (e) {
+			console.error("get_tier_rates_bulk failed", e);
+			return { all_have_tier: false, error: e };
+		}
+		const msg = (r && r.message) || {};
+		const rows = msg.rows || [];
+		const missing = [];
+
+		rows.forEach((row) => {
+			const it = items.find((x) => x.item_code === row.item_code);
+			if (!it) return;
+			if (row.has_tier) {
+				it.rate = row.rate;
+				it.price_list_rate = row.rate;
+				it.base_rate = row.rate;
+				it.base_price_list_rate = row.rate;
+				it._tier_applied = true;
+				it._tier_name = row.tier_name;
+				it.posa_amount_due = Math.round(it.rate * (it.qty || 0) * 100) / 100;
+				it._no_tier = false;
+			} else {
+				it._tier_applied = false;
+				it._no_tier = true;
+				missing.push(it.item_code);
+			}
+		});
+
+		if (missing.length) {
+			this.eventBus?.emit("show_message", {
+				title: __("No tier rate for this customer"),
+				detail: __(
+					"Cannot proceed: items {0} have no LPG Outlet Price Tier configured for customer {1} (group/territory).",
+					[missing.join(", "), this.customer],
+				),
+				color: "error",
+				groupId: "lpg-no-tier",
+			});
+		}
+
+		return msg;
 	},
 
 	// Get price list for current customer
