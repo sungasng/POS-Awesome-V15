@@ -37,10 +37,10 @@ import frappe
 from frappe.utils import flt
 
 
-# Qty precision: physical dispensers at Sungas read 1 decimal place (e.g.
-# 0.1 kg increments). Storing more precision lies to the cashier about
+# Qty precision: physical dispensers at Sungas read 2 decimal places (e.g.
+# 0.01 kg increments). Storing more precision lies to the cashier about
 # what the dispenser can actually deliver.
-QTY_PRECISION = 1
+QTY_PRECISION = 2
 # Money precision — NGN to kobo.
 AMOUNT_PRECISION = 2
 # Tolerance for "amount drifted" detection (avoid float jitter).
@@ -75,11 +75,11 @@ def sync_kg_fields(doc, method=None):
 
         if amount_edited:
             # Cashier typed \u20a6 -- recompute qty from amount.
-            # ROUND DOWN to 1 decimal: the dispenser can only deliver 1-dp
+            # ROUND DOWN to 2 decimals: the dispenser delivers 0.01 kg
             # increments, so we give the customer the largest qty their cash
             # buys without going over. Cashier returns the leftover as change.
             import math
-            new_qty = math.floor((amount_due / rate) * 10) / 10
+            new_qty = math.floor((amount_due / rate) * 100) / 100
             if new_qty != qty:
                 row.qty = new_qty
                 qty = new_qty
