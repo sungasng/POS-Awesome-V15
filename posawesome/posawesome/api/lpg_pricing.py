@@ -35,10 +35,24 @@ def _get_customer_meta(customer: str) -> dict:
 
 
 def _get_pos_profile_territory(pos_profile: str | None) -> str | None:
-    """Return the territory configured on a POS Profile, or None."""
+    """
+    Return the OUTLET territory for a POS Profile.
+
+    POS Profile in ERPNext v15 has no direct `territory` column — outlet
+    locality is encoded in the warehouse instead (e.g. `Pedro - SCL`).
+    We derive the Territory by reading the warehouse's `warehouse_name`
+    (the bit before ' - <abbr>') and checking that a Territory exists
+    with the same name.
+    """
     if not pos_profile:
         return None
-    return frappe.db.get_value("POS Profile", pos_profile, "territory") or None
+    warehouse = frappe.db.get_value("POS Profile", pos_profile, "warehouse")
+    if not warehouse:
+        return None
+    wh_name = frappe.db.get_value("Warehouse", warehouse, "warehouse_name") or ""
+    if wh_name and frappe.db.exists("Territory", wh_name):
+        return wh_name
+    return None
 
 
 def find_applicable_tier(

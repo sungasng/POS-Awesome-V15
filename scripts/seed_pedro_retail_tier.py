@@ -17,47 +17,39 @@ import sys
 import frappe
 
 
-ITEM = "LPG"
+ITEMS = ("LPG", "LPG-REFILL")
 CUSTOMER_GROUP = "Retail"
 TERRITORY = "Pedro"
 RATE = 3000.0
 CURRENCY = "NGN"
 
 
-def main():
-    print("=" * 70)
-    print(f" Seed LPG tier: {ITEM} + {CUSTOMER_GROUP} + {TERRITORY} = \u20a6{RATE:,.0f}/Kg")
-    print("=" * 70)
-
-    # Check prerequisites
-    for dt, n in (("Item", ITEM), ("Customer Group", CUSTOMER_GROUP), ("Territory", TERRITORY)):
-        if not frappe.db.exists(dt, n):
-            print(f"  ERROR: {dt} {n!r} not found.")
-            sys.exit(1)
-
+def _seed_one(item_code: str):
+    if not frappe.db.exists("Item", item_code):
+        print(f"  SKIP {item_code}: Item not found")
+        return
     existing = frappe.db.get_value(
         "LPG Outlet Price Tier",
         {
-            "item_code": ITEM,
+            "item_code": item_code,
             "customer_group": CUSTOMER_GROUP,
             "territory": TERRITORY,
             "min_qty": 0,
         },
         "name",
     )
-
     if existing:
         tier = frappe.get_doc("LPG Outlet Price Tier", existing)
         before = tier.rate
         tier.rate = RATE
         tier.enabled = 1
-        tier.notes = (tier.notes or "") + f"\n[seed_pedro_retail_tier] {before} -> {RATE}"
+        tier.notes = (tier.notes or "") + f"\n[seed] {before} -> {RATE}"
         tier.save(ignore_permissions=True)
-        print(f"  UPDATED tier {existing}: rate {before} -> {RATE}")
+        print(f"  UPDATED tier {existing} ({item_code}): rate {before} -> {RATE}")
     else:
         tier = frappe.get_doc({
             "doctype": "LPG Outlet Price Tier",
-            "item_code": ITEM,
+            "item_code": item_code,
             "customer_group": CUSTOMER_GROUP,
             "territory": TERRITORY,
             "min_qty": 0,
@@ -67,7 +59,21 @@ def main():
             "enabled": 1,
             "notes": "Seeded by seed_pedro_retail_tier.py",
         }).insert(ignore_permissions=True)
-        print(f"  CREATED tier {tier.name}: \u20a6{RATE:,.0f}/Kg")
+        print(f"  CREATED tier {tier.name} ({item_code}): \u20a6{RATE:,.0f}/Kg")
+
+
+def main():
+    print("=" * 70)
+    print(f" Seed Pedro+Retail LPG tier(s) @ \u20a6{RATE:,.0f}/Kg")
+    print("=" * 70)
+
+    for dt, n in (("Customer Group", CUSTOMER_GROUP), ("Territory", TERRITORY)):
+        if not frappe.db.exists(dt, n):
+            print(f"  ERROR: {dt} {n!r} not found.")
+            sys.exit(1)
+
+    for item_code in ITEMS:
+        _seed_one(item_code)
 
     frappe.db.commit()
     frappe.clear_cache()
