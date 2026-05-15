@@ -4223,6 +4223,12 @@ export default {
 			item_code: it.item_code,
 			qty: it.qty,
 		}));
+		// eslint-disable-next-line no-console
+		console.log("[LPG-Tier] apply_tier_pricing_to_cart firing", {
+			customer: this.customer,
+			pos_profile: this.pos_profile?.name,
+			items_count: items.length,
+		});
 		let r;
 		try {
 			r = await frappe.call({
@@ -4231,13 +4237,16 @@ export default {
 					items: JSON.stringify(payload),
 					customer: this.customer,
 					posting_date: this.invoice_doc?.posting_date || null,
+					pos_profile: this.pos_profile?.name || null,
 				},
 			});
 		} catch (e) {
-			console.error("get_tier_rates_bulk failed", e);
+			console.error("[LPG-Tier] get_tier_rates_bulk failed", e);
 			return { all_have_tier: false, error: e };
 		}
 		const msg = (r && r.message) || {};
+		// eslint-disable-next-line no-console
+		console.log("[LPG-Tier] server response", msg);
 		const rows = msg.rows || [];
 		const missing = [];
 
