@@ -12,6 +12,7 @@ from posawesome.posawesome.api.payments import get_posawesome_credit_redeem_rema
 from posawesome.posawesome.api.posa_kg_calc import sync_kg_fields
 from posawesome.posawesome.api.lpg_pricing import apply_tiered_pricing
 from posawesome.posawesome.api.lpg_barcode import set_receipt_barcode
+from posawesome.posawesome.api.cash_overage import apply_cash_overage
 from posawesome.posawesome.doctype.delivery_charges.delivery_charges import (
     get_applicable_delivery_charges,
 )
@@ -27,6 +28,7 @@ def validate(doc, method):
     # Phase 5 — LPG customizations:
     apply_tiered_pricing(doc, method)   # Feature 2: outlet/customer-group tiered pricing
     sync_kg_fields(doc, method)         # Feature 1: ₦↔Kg sync
+    apply_cash_overage(doc, method)     # Feature 1b: book cash overage as rounding adjustment
     set_receipt_barcode(doc, method)    # Feature 3: barcode payload
 
 

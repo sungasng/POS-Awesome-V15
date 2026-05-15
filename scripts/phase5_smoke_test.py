@@ -278,13 +278,13 @@ def test_feature_2_amount_due():
         f"got qty={row.qty}",
     )
 
-    # 2c — round-trip: after amount-driven qty rewrite, posa_amount_due
-    # re-anchors to flt(qty * rate, 2) so receipts match exactly.
-    expected = flt(1.47 * 1360, 2)  # = 1999.20
+    # 2c — cashier's typed amount is PRESERVED (not re-anchored to qty*rate).
+    # The difference (\u20a62000 - 1.47\xd71360 = \u20a60.80) becomes the
+    # cash-overage rounding adjustment booked by apply_cash_overage.
     _record(
-        "2c amount_due re-anchored after qty rewrite",
-        flt(row.posa_amount_due) == expected,
-        f"got posa_amount_due={row.posa_amount_due}, expected={expected}",
+        "2c posa_amount_due preserved as cashier-typed value",
+        flt(row.posa_amount_due) == 2000.0,
+        f"got posa_amount_due={row.posa_amount_due}, expected=2000.0",
     )
 
     # 2d — rate=0 must not divide by zero or rewrite qty.
@@ -309,6 +309,37 @@ def test_feature_2_amount_due():
         "2e legacy posa_kg_qty / posa_rate_per_kg mirror qty / rate",
         ok_mirror,
         f"kg_qty={getattr(row, 'posa_kg_qty', None)} rate_per_kg={getattr(row, 'posa_rate_per_kg', None)}",
+    )
+
+    # 2f — Cash overage: cashier types 2000 at 1360/kg -> qty 1.47, goods
+    # value 1999.20, overage 0.80 booked as rounding_adjustment.
+    from posawesome.posawesome.api.cash_overage import apply_cash_overage
+    si = _new_si(qty=1, rate=1360, posa_amount_due=2000)
+    sync_kg_fields(si)
+    # Fake the grand_total ERPNext would compute after taxes_and_totals.
+    si.grand_total = flt(si.items[0].qty * si.items[0].rate, 2)  # 1999.20
+    apply_cash_overage(si)
+    expected_overage = 0.80
+    _record(
+        "2f overage 2000-1999.20=0.80 booked to rounding_adjustment",
+        abs(flt(si.rounding_adjustment) - expected_overage) < 0.01,
+        f"rounding_adjustment={si.rounding_adjustment}, expected={expected_overage}",
+    )
+    _record(
+        "2g rounded_total == cashier's typed amount",
+        flt(si.rounded_total) == 2000.0,
+        f"rounded_total={si.rounded_total}",
+    )
+
+    # 2h — Cash overage when amount EXACTLY matches goods value: no rounding.
+    si = _new_si(qty=2, rate=1360, posa_amount_due=2720)  # goods=2720, exact
+    sync_kg_fields(si)
+    si.grand_total = flt(si.items[0].qty * si.items[0].rate, 2)
+    apply_cash_overage(si)
+    _record(
+        "2h exact match -> no rounding adjustment",
+        flt(si.rounding_adjustment or 0) == 0.0,
+        f"rounding_adjustment={si.rounding_adjustment}",
     )
 
 

@@ -77,16 +77,18 @@ def sync_kg_fields(doc, method=None):
             # Cashier typed \u20a6 -- recompute qty from amount.
             # ROUND DOWN to 2 decimals: the dispenser delivers 0.01 kg
             # increments, so we give the customer the largest qty their cash
-            # buys without going over. Cashier returns the leftover as change.
+            # buys without going over. The difference (e.g. \u20a620 on a
+            # \u20a62,000 cash payment) is booked as a Rounding Adjustment to
+            # the Company's round-off account by `apply_cash_overage`.
             import math
             new_qty = math.floor((amount_due / rate) * 100) / 100
             if new_qty != qty:
                 row.qty = new_qty
                 qty = new_qty
                 any_qty_changed = True
-            # Re-anchor amount_due to the rounded qty*rate so downstream
-            # totals match exactly (avoids "\u20a62,000 typed -> \u20a61,999.96 in receipt").
-            row.posa_amount_due = flt(qty * rate, AMOUNT_PRECISION)
+            # KEEP posa_amount_due as the cashier's typed value. The overage
+            # post-processor reads it to compute the rounding line.
+            row.posa_amount_due = flt(amount_due, AMOUNT_PRECISION)
         else:
             # Qty (or rate) is authoritative — mirror into amount_due.
             row.posa_amount_due = computed
