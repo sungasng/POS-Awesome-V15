@@ -1035,6 +1035,8 @@ export default {
 				const args = {
 					pos_profile: JSON.stringify(this.pos_profile),
 					items_data: JSON.stringify([{ item_code: code }]),
+					// Sungas Phase-5: pass customer so backend stamps tier rate.
+					customer: this.customer,
 				};
 				const priceList =
 					this.selected_price_list ||

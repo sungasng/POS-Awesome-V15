@@ -1443,6 +1443,10 @@ export default {
 					pos_profile: JSON.stringify(this.pos_profile),
 					items_data: JSON.stringify(items),
 					price_list: this.active_price_list,
+					// Sungas Phase-5: pass customer so the backend stamps the
+					// LPG Outlet Price Tier rate. Without it the background
+					// refresh returns the default price_list_rate (₦1,360).
+					customer: this.customer,
 				},
 				freeze: false,
 				signal: this.abortController.signal,

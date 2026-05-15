@@ -1189,6 +1189,9 @@ export const useItemsStore = defineStore("items", () => {
 					pos_profile: JSON.stringify(posProfile.value),
 					items_data: JSON.stringify(itemBatch),
 					price_list: activePriceList.value,
+					// Sungas Phase-5: pass current customer so backend can
+					// stamp the LPG Outlet Price Tier rate over price_list_rate.
+					customer: customer.value,
 				},
 			});
 
