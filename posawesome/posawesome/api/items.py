@@ -884,7 +884,19 @@ def get_items_details(pos_profile, items_data, price_list=None, customer=None):
         return []
 
     aggregator = ItemDetailAggregator(pos_profile, price_list=price_list, customer=customer)
-    return aggregator.build_details(items_data)
+    rows = aggregator.build_details(items_data)
+
+    # Sungas Phase-5: stamp LPG Outlet Price Tier rate over every row before
+    # returning. Without this, POS Awesome's background refresh overwrites the
+    # front-end-applied tier rate with the price-list rate.
+    try:
+        from .lpg_pricing import apply_tiers_to_rows
+        profile_name = pos_profile.get("name") if isinstance(pos_profile, dict) else pos_profile
+        apply_tiers_to_rows(rows, customer=customer, pos_profile=profile_name)
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), "LPG tier override (bulk)")
+
+    return rows
 
 
 @frappe.whitelist()
@@ -1005,6 +1017,25 @@ def get_item_detail(item, doc=None, warehouse=None, price_list=None, company=Non
             uoms.append({"uom": stock_uom, "conversion_factor": 1.0})
 
     res["item_uoms"] = uoms
+
+    # Sungas Phase-5: stamp LPG Outlet Price Tier rate over the response so
+    # POS Awesome's background refresh receives the already-tiered rate.
+    try:
+        from .lpg_pricing import override_item_detail_with_tier
+        customer = item.get("customer")
+        pos_profile = item.get("pos_profile")
+        if customer:
+            # erpnext.get_item_details may not echo item_code; ensure the
+            # tier helper can find it.
+            res.setdefault("item_code", item.get("item_code"))
+            override_item_detail_with_tier(
+                res,
+                customer=customer,
+                pos_profile=pos_profile,
+                posting_date=item.get("posting_date") or nowdate(),
+            )
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), "LPG tier override (single)")
 
     return res
 

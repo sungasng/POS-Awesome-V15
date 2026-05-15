@@ -145,8 +145,8 @@ def apply_tiered_pricing(doc, method=None):
     Document-level entry. Iterates rows of doc.items and overrides `rate`
     whenever a tier matches.
 
-    Uses the OUTLET territory (Sales Invoice.pos_profile.territory), not the
-    customer's registered territory. See find_applicable_tier docstring.
+    Uses the OUTLET territory (derived from Sales Invoice.pos_profile.warehouse),
+    not the customer's registered territory. See find_applicable_tier docstring.
     """
     if not getattr(doc, "items", None):
         return
@@ -188,6 +188,95 @@ def apply_tiered_pricing(doc, method=None):
 
     if any_rate_changed and hasattr(doc, "calculate_taxes_and_totals"):
         doc.calculate_taxes_and_totals()
+
+
+def override_item_detail_with_tier(item_detail: dict, customer: str | None,
+                                    pos_profile: str | None,
+                                    posting_date: str | None = None) -> dict:
+    """
+    Mutate a single get_item_detail / build_details response dict so its
+    `rate` / `price_list_rate` reflect the LPG Outlet Price Tier for
+    (customer's group, pos_profile's outlet territory).
+
+    Called by `get_item_detail` and `get_items_details` in api/items.py so
+    that every POS Awesome refresh returns the already-tiered rate. Without
+    this hook, POS Awesome's background `refreshAllItemDetailsInBatches`
+    would overwrite our front-end tier rate with the price-list rate.
+    """
+    if not item_detail or not customer:
+        return item_detail
+    item_code = item_detail.get("item_code") or item_detail.get("name")
+    if not item_code:
+        return item_detail
+
+    meta = _get_customer_meta(customer)
+    customer_group = meta.get("customer_group")
+    if not customer_group:
+        return item_detail
+
+    outlet_territory = _get_pos_profile_territory(pos_profile)
+    qty = flt(item_detail.get("qty") or 1)
+
+    tier = find_applicable_tier(
+        item_code=item_code,
+        customer_group=customer_group,
+        territory=outlet_territory,
+        qty=qty,
+        posting_date=posting_date,
+    )
+    if not tier:
+        return item_detail
+
+    tier_rate = flt(tier.get("rate") or 0)
+    if tier_rate <= 0:
+        return item_detail
+
+    # Stamp the tier rate on every field POS Awesome reads.
+    item_detail["rate"] = tier_rate
+    item_detail["price_list_rate"] = tier_rate
+    item_detail["base_rate"] = tier_rate
+    item_detail["base_price_list_rate"] = tier_rate
+    item_detail["lpg_tier_applied"] = tier.get("name")
+    item_detail["lpg_tier_rate"] = tier_rate
+    return item_detail
+
+
+def apply_tiers_to_rows(rows: list, customer: str | None, pos_profile: str | None,
+                         posting_date: str | None = None) -> list:
+    """Bulk variant of override_item_detail_with_tier for `build_details`."""
+    if not rows or not customer:
+        return rows
+    meta = _get_customer_meta(customer)
+    customer_group = meta.get("customer_group")
+    if not customer_group:
+        return rows
+    outlet_territory = _get_pos_profile_territory(pos_profile)
+
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        item_code = row.get("item_code") or row.get("name")
+        if not item_code:
+            continue
+        tier = find_applicable_tier(
+            item_code=item_code,
+            customer_group=customer_group,
+            territory=outlet_territory,
+            qty=flt(row.get("qty") or 1),
+            posting_date=posting_date,
+        )
+        if not tier:
+            continue
+        tier_rate = flt(tier.get("rate") or 0)
+        if tier_rate <= 0:
+            continue
+        row["rate"] = tier_rate
+        row["price_list_rate"] = tier_rate
+        row["base_rate"] = tier_rate
+        row["base_price_list_rate"] = tier_rate
+        row["lpg_tier_applied"] = tier.get("name")
+        row["lpg_tier_rate"] = tier_rate
+    return rows
 
 
 @frappe.whitelist()
