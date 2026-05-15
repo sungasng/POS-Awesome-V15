@@ -147,21 +147,42 @@ def apply_tiered_pricing(doc, method=None):
 
     Uses the OUTLET territory (derived from Sales Invoice.pos_profile.warehouse),
     not the customer's registered territory. See find_applicable_tier docstring.
+
+    Phase-5 Sungas business rule: for any item that has at least one
+    LPG Outlet Price Tier row configured (i.e., a 'tiered item'), the sale
+    MUST resolve to a matching tier. If no tier matches the
+    (customer_group, outlet_territory, qty, posting_date) combination, the
+    save is rejected with a clear message. Items that have NO tier rows at
+    all (accessories, cylinders, cookers) fall through to the normal price
+    list rate.
     """
     if not getattr(doc, "items", None):
         return
 
     meta = _get_customer_meta(getattr(doc, "customer", None))
     customer_group = meta.get("customer_group")
-    if not customer_group:
-        return
 
     outlet_territory = _get_pos_profile_territory(getattr(doc, "pos_profile", None))
     posting_date = getattr(doc, "posting_date", None) or getattr(doc, "transaction_date", None)
 
     any_rate_changed = False
+    missing: list[tuple[str, str]] = []  # (item_code, reason)
 
     for row in doc.items:
+        # Does this item have ANY tier rows configured? If not, it's a
+        # non-tiered item (accessory/cylinder) — leave it on price-list rate.
+        has_any_tier = frappe.db.exists(
+            "LPG Outlet Price Tier",
+            {"item_code": row.item_code, "enabled": 1},
+        )
+        if not has_any_tier:
+            continue
+
+        # Tiered item: customer_group is mandatory.
+        if not customer_group:
+            missing.append((row.item_code, "no customer / customer_group"))
+            continue
+
         tier = find_applicable_tier(
             item_code=row.item_code,
             customer_group=customer_group,
@@ -170,10 +191,16 @@ def apply_tiered_pricing(doc, method=None):
             posting_date=posting_date,
         )
         if not tier:
+            missing.append((
+                row.item_code,
+                f"no tier for (customer_group={customer_group!r}, "
+                f"territory={outlet_territory!r})",
+            ))
             continue
 
         tier_rate = flt(tier["rate"])
         if tier_rate <= 0:
+            missing.append((row.item_code, f"tier {tier['name']} has rate=0"))
             continue
 
         if flt(getattr(row, "rate", 0)) != tier_rate:
@@ -185,6 +212,18 @@ def apply_tiered_pricing(doc, method=None):
                 marker = f"LPG-Tier:{tier['name']}"
                 if marker not in existing:
                     row.posa_offers = (existing + "," + marker).strip(",")
+
+    if missing:
+        lines = "\n".join(f"  - {ic}: {reason}" for ic, reason in missing)
+        frappe.throw(
+            (
+                "LPG tier pricing required but no matching tier was found "
+                "for the following item(s):\n{0}\n\n"
+                "Configure an 'LPG Outlet Price Tier' row, or pick a "
+                "customer / outlet whose group + territory has a price."
+            ).format(lines),
+            title="No LPG Tier Price",
+        )
 
     if any_rate_changed and hasattr(doc, "calculate_taxes_and_totals"):
         doc.calculate_taxes_and_totals()

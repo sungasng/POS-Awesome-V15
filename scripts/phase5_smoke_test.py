@@ -217,6 +217,54 @@ def test_feature_1_tiered_pricing():
     except Exception as e:
         _record("1c apply_tiered_pricing", False, f"exception: {e}")
 
+    # 1e — Strict-mode regression: any item with at least one tier row must
+    # have a matching tier for the (customer_group, territory, qty, date)
+    # combo, else apply_tiered_pricing must throw. Build a synthetic
+    # Sales Invoice for a tiered item but with a customer in a group with
+    # NO matching tier; expect frappe.throw.
+    rogue_group_name = f"{TEST_PREFIX}-NO-TIER"
+    if not frappe.db.exists("Customer Group", rogue_group_name):
+        frappe.get_doc({
+            "doctype": "Customer Group",
+            "customer_group_name": rogue_group_name,
+            "parent_customer_group": "All Customer Groups",
+            "is_group": 0,
+        }).insert(ignore_permissions=True)
+    rogue_customer_name = f"{TEST_PREFIX}-NoTier-Cust"
+    if not frappe.db.exists("Customer", rogue_customer_name):
+        frappe.get_doc({
+            "doctype": "Customer",
+            "customer_name": rogue_customer_name,
+            "customer_group": rogue_group_name,
+            "territory": TEST_TERRITORY,
+        }).insert(ignore_permissions=True)
+
+    si2 = frappe.new_doc("Sales Invoice")
+    si2.customer = rogue_customer_name
+    si2.posting_date = today()
+    si2.due_date = today()
+    si2.set_posting_time = 1
+    si2.append("items", {
+        "item_code": TEST_ITEM,
+        "qty": 1,
+        "rate": STANDARD_RATE,
+        "price_list_rate": STANDARD_RATE,
+        "uom": "Nos",
+        "conversion_factor": 1,
+    })
+    threw = False
+    err_msg = ""
+    try:
+        apply_tiered_pricing(si2)
+    except Exception as e:  # noqa: BLE001
+        threw = True
+        err_msg = str(e)[:80]
+    _record(
+        "1e tiered item w/o matching tier rejects sale",
+        threw,
+        f"threw={threw} msg={err_msg!r}",
+    )
+
 
 # ---------------------------------------------------------------------------
 # Feature 2 — ₦ ↔ Kg / Amount-Due sync (cash-change scenario)
@@ -591,8 +639,8 @@ def teardown():
         except Exception:
             pass
 
-    # Customers
-    for n in (TEST_CUSTOMER, TEST_CUSTOMER_DUP):
+    # Customers (incl. strict-mode 1e fixture)
+    for n in (TEST_CUSTOMER, TEST_CUSTOMER_DUP, f"{TEST_PREFIX}-NoTier-Cust"):
         if frappe.db.exists("Customer", n):
             try:
                 frappe.delete_doc("Customer", n, force=1, ignore_permissions=True)
@@ -604,6 +652,7 @@ def teardown():
     for dt, n in (
         ("Item", TEST_ITEM),
         ("Customer Group", TEST_GROUP),
+        ("Customer Group", f"{TEST_PREFIX}-NO-TIER"),
         ("Territory", TEST_TERRITORY),
     ):
         if frappe.db.exists(dt, n):
