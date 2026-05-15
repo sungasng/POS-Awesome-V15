@@ -257,7 +257,7 @@
 											:label="frappe._('Total Amount')"
 											class="pos-themed-input"
 											hide-details
-											:model-value="memoizedFormatCurrency(item.qty * item.rate)"
+											:model-value="memoizedFormatCurrency(displayAmountForRow(item))"
 											@change="handleAmountDueChange(item, $event)"
 											:disabled="
 												!!item.posa_is_replace ||
@@ -1231,6 +1231,13 @@ export default {
 		// Cashier types a cash amount into the Total Amount field.
 		// Compute qty = amount / rate (3 dp) and feed it through the
 		// existing qty pipeline so totals, taxes and discounts recompute.
+		//
+		// We ALSO persist the typed cash on `posa_amount_due` so:
+		//   1. The Total Amount field re-displays the typed cash (not the
+		//      computed qty*rate, which floors and loses the overage).
+		//   2. The backend `apply_cash_overage` hook can book the
+		//      `posa_amount_due - qty*rate` overage as a Rounding Adjustment
+		//      to the Round Off Expense account.
 		handleAmountDueChange(item, event) {
 			const raw = (event && event.target && event.target.value) || "";
 			// Strip currency formatting (commas, spaces, ₦).
@@ -1261,6 +1268,23 @@ export default {
 				return;
 			}
 			this.setFormatedQty(item, "qty", null, false, newQty);
+			// Persist the typed cash so the Total Amount field re-displays it
+			// AND so the backend `apply_cash_overage` hook can book the diff.
+			this.setFormatedQty(item, "posa_amount_due", null, false, amount);
+		},
+		// Display helper: prefer cashier-typed cash amount when it sits
+		// within one tier-rate unit above the computed goods value (= valid
+		// overage). Otherwise fall back to qty * rate so the field stays in
+		// sync after a manual qty edit, customer switch, or tier-rate change.
+		displayAmountForRow(item) {
+			const qty = Number(item?.qty) || 0;
+			const rate = Number(item?.rate) || 0;
+			const goodsValue = qty * rate;
+			const typed = Number(item?.posa_amount_due) || 0;
+			if (typed > 0 && typed >= goodsValue && typed <= goodsValue + rate) {
+				return typed;
+			}
+			return goodsValue;
 		},
 		handleMinusClick(item) {
 			if (this.isReturnInvoice) {
