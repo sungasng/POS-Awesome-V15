@@ -268,19 +268,19 @@ def test_feature_2_amount_due():
         f"got posa_amount_due={row.posa_amount_due}",
     )
 
-    # 2b — amount_due drives qty
+    # 2b — amount_due drives qty (1-dp ROUND DOWN per Sungas dispenser precision)
     si = _new_si(qty=1, rate=1360, posa_amount_due=2000)
     sync_kg_fields(si)
     row = si.items[0]
     _record(
-        "2b posa_amount_due=2000, rate=1360 -> qty=1.471",
-        flt(row.qty) == 1.471,
+        "2b posa_amount_due=2000, rate=1360 -> qty=1.4 (floor 1-dp)",
+        flt(row.qty) == 1.4,
         f"got qty={row.qty}",
     )
 
     # 2c — round-trip: after amount-driven qty rewrite, posa_amount_due
     # re-anchors to flt(qty * rate, 2) so receipts match exactly.
-    expected = flt(1.471 * 1360, 2)
+    expected = flt(1.4 * 1360, 2)  # = 1904.0
     _record(
         "2c amount_due re-anchored after qty rewrite",
         flt(row.posa_amount_due) == expected,

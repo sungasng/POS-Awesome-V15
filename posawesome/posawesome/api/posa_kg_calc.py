@@ -37,8 +37,10 @@ import frappe
 from frappe.utils import flt
 
 
-# Qty precision for division — bulk LPG can be dispensed to 3 dp.
-QTY_PRECISION = 3
+# Qty precision: physical dispensers at Sungas read 1 decimal place (e.g.
+# 0.1 kg increments). Storing more precision lies to the cashier about
+# what the dispenser can actually deliver.
+QTY_PRECISION = 1
 # Money precision — NGN to kobo.
 AMOUNT_PRECISION = 2
 # Tolerance for "amount drifted" detection (avoid float jitter).
@@ -72,14 +74,18 @@ def sync_kg_fields(doc, method=None):
         )
 
         if amount_edited:
-            # Cashier typed ₦ — recompute qty from amount.
-            new_qty = flt(amount_due / rate, QTY_PRECISION)
+            # Cashier typed \u20a6 -- recompute qty from amount.
+            # ROUND DOWN to 1 decimal: the dispenser can only deliver 1-dp
+            # increments, so we give the customer the largest qty their cash
+            # buys without going over. Cashier returns the leftover as change.
+            import math
+            new_qty = math.floor((amount_due / rate) * 10) / 10
             if new_qty != qty:
                 row.qty = new_qty
                 qty = new_qty
                 any_qty_changed = True
             # Re-anchor amount_due to the rounded qty*rate so downstream
-            # totals match exactly (avoids "₦2,000 typed → ₦1,999.96 in receipt").
+            # totals match exactly (avoids "\u20a62,000 typed -> \u20a61,999.96 in receipt").
             row.posa_amount_due = flt(qty * rate, AMOUNT_PRECISION)
         else:
             # Qty (or rate) is authoritative — mirror into amount_due.

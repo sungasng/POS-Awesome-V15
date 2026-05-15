@@ -1245,7 +1245,21 @@ export default {
 				this.removeItem(item);
 				return;
 			}
-			const newQty = Math.round((amount / rate) * 1000) / 1000;
+			const newQty = Math.floor((amount / rate) * 10) / 10;
+			if (newQty === 0) {
+				// amount is less than 0.1 \u00d7 rate -- below minimum dispense.
+				const minRequired = Math.ceil(rate * 0.1);
+				this.eventBus?.emit("show_message", {
+					title: __("Amount too low"),
+					detail: __(
+						"Minimum sale is 0.1 kg = \u20a6{0} at the current rate of \u20a6{1}/kg.",
+						[minRequired, rate],
+					),
+					color: "warning",
+					groupId: "min-sale",
+				});
+				return;
+			}
 			this.setFormatedQty(item, "qty", null, false, newQty);
 		},
 		handleMinusClick(item) {

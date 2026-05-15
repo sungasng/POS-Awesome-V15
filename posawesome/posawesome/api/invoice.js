@@ -25,8 +25,10 @@ frappe.ui.form.on("Sales Invoice Item", {
 		const expected = flt(rate * flt(row.qty), 2);
 		if (Math.abs(amount_due - expected) < 0.01) return; // no real change
 
-		const new_qty = flt(amount_due / rate, 3);
+		// Round DOWN qty to 1 decimal (Sungas dispenser precision).
+		const new_qty = Math.floor((amount_due / rate) * 10) / 10;
 		if (new_qty === flt(row.qty)) return;
+		if (new_qty <= 0) return;
 
 		frappe.model.set_value(cdt, cdn, "qty", new_qty);
 	},
