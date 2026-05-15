@@ -3212,14 +3212,14 @@ export default {
 			// (Stock items may have changed customer between adds; this is the
 			// last gate before the cashier sees the Payments screen.)
 			try {
-				const result = await this.apply_tier_pricing_to_cart();
-				const missing = (this.items || []).filter((it) => it._no_tier === true);
+				await this.apply_tier_pricing_to_cart();
+				const missing = this.lpgRowsMissingTier ? this.lpgRowsMissingTier() : [];
 				if (missing.length) {
 					this.eventBus.emit("show_message", {
 						title: __("No tier rate"),
 						detail: __(
 							"Items {0} have no LPG Outlet Price Tier configured for {1}. Cannot PAY.",
-							[missing.map((x) => x.item_code).join(", "), this.customer],
+							[missing.join(", "), this.customer],
 						),
 						color: "error",
 						groupId: "pay-no-tier",
@@ -4219,10 +4219,7 @@ export default {
 		const items = this.items || [];
 		if (!items.length) return { all_have_tier: true, rows: [] };
 
-		const payload = items.map((it) => ({
-			item_code: it.item_code,
-			qty: it.qty,
-		}));
+		const payload = items.map((it) => ({ item_code: it.item_code, qty: it.qty }));
 		// eslint-disable-next-line no-console
 		console.log("[LPG-Tier] apply_tier_pricing_to_cart firing", {
 			customer: this.customer,
@@ -4250,21 +4247,28 @@ export default {
 		const rows = msg.rows || [];
 		const missing = [];
 
+		// Build a Map of (item_code -> tier_info) so callers can
+		// check which rows lack a tier without us mutating new keys
+		// onto the items themselves (that change of shape was triggering
+		// a Vue reactivity race -> requestAnimationFrame parameter undefined).
+		this._lpgTierByCode = new Map();
+
 		rows.forEach((row) => {
 			const it = items.find((x) => x.item_code === row.item_code);
 			if (!it) return;
 			if (row.has_tier) {
-				it.rate = row.rate;
-				it.price_list_rate = row.rate;
-				it.base_rate = row.rate;
-				it.base_price_list_rate = row.rate;
-				it._tier_applied = true;
-				it._tier_name = row.tier_name;
-				it.posa_amount_due = Math.round(it.rate * (it.qty || 0) * 100) / 100;
-				it._no_tier = false;
+				this._lpgTierByCode.set(row.item_code, row);
+				// Use the framework-blessed setter so Vue picks up the
+				// change without re-shaping the item proxy.
+				if (Number(it.rate) !== Number(row.rate)) {
+					this.setFormatedQty(it, "rate", null, false, row.rate);
+					this.setFormatedQty(it, "price_list_rate", null, false, row.rate);
+				}
+				const newAmount = Math.round(Number(row.rate) * Number(it.qty || 0) * 100) / 100;
+				if (Number(it.posa_amount_due) !== newAmount) {
+					this.setFormatedQty(it, "posa_amount_due", null, false, newAmount);
+				}
 			} else {
-				it._tier_applied = false;
-				it._no_tier = true;
 				missing.push(it.item_code);
 			}
 		});
@@ -4282,6 +4286,14 @@ export default {
 		}
 
 		return msg;
+	},
+
+	// Helper used by show_payment to check if any row is missing a tier.
+	lpgRowsMissingTier() {
+		const items = this.items || [];
+		if (!items.length) return [];
+		const cache = this._lpgTierByCode || new Map();
+		return items.filter((it) => !cache.has(it.item_code)).map((it) => it.item_code);
 	},
 
 	// Get price list for current customer
