@@ -241,15 +241,22 @@ def override_item_detail_with_tier(item_detail: dict, customer: str | None,
     that every POS Awesome refresh returns the already-tiered rate. Without
     this hook, POS Awesome's background `refreshAllItemDetailsInBatches`
     would overwrite our front-end tier rate with the price-list rate.
+
+    Sungas Phase-5: when no customer is selected yet, fall back to the
+    outlet's RETAIL tier rate so the item card already shows the right
+    default for that branch (e.g. \u20a61,365 at Asaba, \u20a61,380 at Eleme).
     """
-    if not item_detail or not customer:
+    if not item_detail:
         return item_detail
     item_code = item_detail.get("item_code") or item_detail.get("name")
     if not item_code:
         return item_detail
 
-    meta = _get_customer_meta(customer)
-    customer_group = meta.get("customer_group")
+    if customer:
+        meta = _get_customer_meta(customer)
+        customer_group = meta.get("customer_group")
+    else:
+        customer_group = "Retail"  # default for the item-card display
     if not customer_group:
         return item_detail
 
@@ -282,11 +289,19 @@ def override_item_detail_with_tier(item_detail: dict, customer: str | None,
 
 def apply_tiers_to_rows(rows: list, customer: str | None, pos_profile: str | None,
                          posting_date: str | None = None) -> list:
-    """Bulk variant of override_item_detail_with_tier for `build_details`."""
-    if not rows or not customer:
+    """Bulk variant of override_item_detail_with_tier for `build_details`.
+
+    Sungas Phase-5: when customer is None, defaults to the outlet's RETAIL
+    tier rate so the item-grid display shows the outlet-specific Retail
+    price before any customer is picked.
+    """
+    if not rows:
         return rows
-    meta = _get_customer_meta(customer)
-    customer_group = meta.get("customer_group")
+    if customer:
+        meta = _get_customer_meta(customer)
+        customer_group = meta.get("customer_group")
+    else:
+        customer_group = "Retail"
     if not customer_group:
         return rows
     outlet_territory = _get_pos_profile_territory(pos_profile)
