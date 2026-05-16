@@ -103,6 +103,27 @@ export default {
 		perfMarkEnd("pos:totals-discount", mark);
 		return result;
 	},
+	// Phase-5 Sungas: total cashier-typed cash overage across the cart.
+	// For each row where posa_amount_due > qty*rate (and the gap fits
+	// within one rate-unit, so it's a same-row rounding), sum the diff.
+	// Used by the bottom Total panel to show ₦1,980 goods + ₦20 round-off
+	// = ₦2,000 (what the customer actually hands over).
+	lpgCashOverage() {
+		const items = this.items || [];
+		let total = 0;
+		for (const item of items) {
+			const qty = Number(item.qty) || 0;
+			const rate = Number(item.rate) || 0;
+			const amountDue = Number(item.posa_amount_due) || 0;
+			if (rate <= 0 || amountDue <= 0) continue;
+			const goodsValue = qty * rate;
+			const diff = amountDue - goodsValue;
+			if (diff > 0.01 && diff <= rate) {
+				total += diff;
+			}
+		}
+		return Math.round(total * 100) / 100;
+	},
 	// Format posting_date for display as DD-MM-YYYY
 	formatted_posting_date: {
 		get() {

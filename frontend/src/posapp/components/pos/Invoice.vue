@@ -308,6 +308,7 @@
 			:additional_discount_percentage="additional_discount_percentage"
 			:total_items_discount_amount="total_items_discount_amount"
 			:subtotal="subtotal"
+			:lpg_cash_overage="lpgCashOverage"
 			:displayCurrency="displayCurrency"
 			:formatFloat="formatFloat"
 			:formatCurrency="formatCurrency"

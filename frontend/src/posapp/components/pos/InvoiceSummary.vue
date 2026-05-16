@@ -82,15 +82,18 @@
 					<!-- Total (moved to maintain row alignment) -->
 					<v-col cols="6">
 						<v-text-field
-							:model-value="formatCurrency(subtotal)"
+							:model-value="formatCurrency(totalDisplayValue)"
 							:prefix="currencySymbol(displayCurrency)"
 							:label="frappe._('Total')"
 							prepend-inner-icon="mdi-cash"
 							variant="solo"
 							density="compact"
 							readonly
-							color="success"
+							:color="hasLpgOverage ? 'amber-darken-3' : 'success'"
 							class="summary-field"
+							data-testid="cart-total-amount"
+							:hint="lpgOverageHint"
+							:persistent-hint="hasLpgOverage"
 						/>
 					</v-col>
 				</v-row>
@@ -219,6 +222,7 @@ export default {
 		additional_discount_percentage: Number,
 		total_items_discount_amount: Number,
 		subtotal: Number,
+		lpg_cash_overage: { type: Number, default: 0 },
 		displayCurrency: String,
 		formatFloat: Function,
 		formatCurrency: Function,
@@ -268,6 +272,29 @@ export default {
 				console.error("Failed to load item selector settings:", e);
 			}
 			return false;
+		},
+		// Phase-5 Sungas: when the cashier types more cash than the goods
+		// value (e.g. \u20a62,000 for 0.66 kg LPG @ \u20a63,000 = \u20a61,980 goods),
+		// surface the rounded total in the cart's bottom Total panel so the
+		// cashier can quote the customer the exact amount due, while the
+		// line-item AMOUNT column still reflects goods value (accounting
+		// integrity preserved for downstream reports).
+		hasLpgOverage() {
+			return Number(this.lpg_cash_overage || 0) > 0.01;
+		},
+		totalDisplayValue() {
+			const base = Number(this.subtotal || 0);
+			const overage = Number(this.lpg_cash_overage || 0);
+			return this.hasLpgOverage ? base + overage : base;
+		},
+		lpgOverageHint() {
+			if (!this.hasLpgOverage) return "";
+			const base = Number(this.subtotal || 0);
+			const overage = Number(this.lpg_cash_overage || 0);
+			return frappe._(
+				"Goods {0} + round-off {1}",
+				[this.formatCurrency(base), this.formatCurrency(overage)],
+			);
 		},
 	},
 	watch: {
