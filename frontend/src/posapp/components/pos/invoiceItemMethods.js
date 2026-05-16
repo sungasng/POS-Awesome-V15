@@ -4269,7 +4269,12 @@ export default {
 					this.setFormatedQty(it, "price_list_rate", null, false, row.rate);
 				}
 				const newAmount = Math.round(Number(row.rate) * Number(it.qty || 0) * 100) / 100;
-				if (Number(it.posa_amount_due) !== newAmount) {
+				// Sungas Phase-5: only auto-fill posa_amount_due when it's
+				// missing or BELOW the goods value. If the cashier typed a
+				// higher amount in the Total Amount field (a valid cash
+				// overage we book to Rounding Adjustment), preserve it.
+				const currentAmount = Number(it.posa_amount_due) || 0;
+				if (currentAmount < newAmount) {
 					this.setFormatedQty(it, "posa_amount_due", null, false, newAmount);
 				}
 			} else {
