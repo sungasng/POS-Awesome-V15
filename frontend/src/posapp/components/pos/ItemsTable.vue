@@ -1280,6 +1280,14 @@ export default {
 			// which would incorrectly set Stock QTY = 2000 when value is
 			// the cash amount.
 			item.posa_amount_due = amount;
+			// Sungas Phase-5: stash this typed cash so Payments.vue can
+			// reconstruct the LPG cash-overage even after the pre-PAY
+			// `load_invoice` round-trip wipes posa_amount_due from
+			// invoice_doc.items.
+			this.eventBus?.emit("lpg_amount_due_changed", {
+				item_code: item.item_code,
+				amount,
+			});
 		},
 		// Display helper: prefer cashier-typed cash amount when it sits
 		// within one tier-rate unit above the computed goods value (= valid

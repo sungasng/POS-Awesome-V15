@@ -1447,6 +1447,25 @@ export default {
 			}
 		},
 
+		// Phase-5 Sungas: track cashier-typed cash overage by item_code so
+		// we can reconstruct rounded_total even after the pre-PAY
+		// load_invoice round-trip wipes the row-level posa_amount_due.
+		_onLpgAmountDueChanged({ item_code, amount } = {}) {
+			if (!item_code) return;
+			this._lpgOverageByCode = this._lpgOverageByCode || new Map();
+			const n = Number(amount) || 0;
+			if (n <= 0) {
+				this._lpgOverageByCode.delete(item_code);
+			} else {
+				this._lpgOverageByCode.set(item_code, n);
+			}
+		},
+		_clearLpgOverageStash() {
+			if (this._lpgOverageByCode) {
+				this._lpgOverageByCode.clear();
+			}
+		},
+
 		// Phase-5 Sungas helper: derive total LPG cash overage from item
 		// rows where the cashier typed a higher Total Amount (posa_amount_due)
 		// than the computed goods value (qty * rate). Set rounded_total and
@@ -1456,17 +1475,31 @@ export default {
 			if (!this.invoice_doc || !Array.isArray(this.invoice_doc.items)) {
 				return;
 			}
+			const stash = this._lpgOverageByCode || new Map();
 			let totalOverage = 0;
 			for (const row of this.invoice_doc.items) {
-				const amountDue = Number(row.posa_amount_due) || 0;
 				const qty = Number(row.qty) || 0;
 				const rate = Number(row.rate) || 0;
 				const goodsValue = qty * rate;
-				if (amountDue > 0 && rate > 0) {
+				if (rate <= 0) continue;
+				// Prefer the cashier-typed cash stashed by ItemsTable; fall
+				// back to posa_amount_due on the row when stash is empty
+				// (e.g. resumed draft). Stash key is item_code; if multiple
+				// rows of the same item code exist, the stash applies to
+				// the first match only.
+				let amountDue = Number(stash.get(row.item_code)) || 0;
+				if (!amountDue) {
+					amountDue = Number(row.posa_amount_due) || 0;
+				}
+				if (amountDue > 0) {
 					const diff = amountDue - goodsValue;
-					// Only OVER counts; under = treat as not edited.
 					if (diff > 0.01 && diff <= rate) {
 						totalOverage += diff;
+						// Restamp posa_amount_due on the row so the backend
+						// apply_cash_overage hook books \u20a620 to Round Off
+						// Expense on submit. (The pre-PAY load_invoice wiped
+						// this field; we restore it from the stash here.)
+						row.posa_amount_due = amountDue;
 					}
 				}
 			}
@@ -1501,14 +1534,17 @@ export default {
 						defaultCash.base_amount = this.invoice_doc.rounded_total;
 					}
 				}
-				console.log(
-					"[LPG-Overage] applied",
-					{
-						grandTotal,
-						totalOverage,
-						roundedTotal: this.invoice_doc.rounded_total,
-					},
-				);
+				console.log("[LPG-Overage] applied", {
+					grandTotal,
+					totalOverage,
+					roundedTotal: this.invoice_doc.rounded_total,
+					source: stash.size ? "stash" : "row.posa_amount_due",
+				});
+			} else {
+				console.log("[LPG-Overage] no overage to apply", {
+					grandTotal,
+					stashSize: stash.size,
+				});
 			}
 		},
 		// Reset all cash payments to zero
@@ -2963,6 +2999,12 @@ export default {
 			});
 			// Scroll to top when payment view is shown
 			this.eventBus.on("show_payment", this.handleShowPayment);
+			// Sungas Phase-5: capture cashier-typed cash overage from the
+			// cart so we can re-apply it after the pre-PAY load_invoice
+			// round-trip wipes posa_amount_due on invoice_doc.items.
+			this._lpgOverageByCode = this._lpgOverageByCode || new Map();
+			this.eventBus.on("lpg_amount_due_changed", this._onLpgAmountDueChanged);
+			this.eventBus.on("clear_invoice", this._clearLpgOverageStash);
 		});
 	},
 	// Lifecycle hook: beforeUnmount
@@ -2979,6 +3021,8 @@ export default {
 		this.eventBus.off("network-online", this.syncPendingInvoices);
 		this.eventBus.off("server-online", this.syncPendingInvoices);
 		this.eventBus.off("show_payment", this.handleShowPayment);
+		this.eventBus.off("lpg_amount_due_changed", this._onLpgAmountDueChanged);
+		this.eventBus.off("clear_invoice", this._clearLpgOverageStash);
 		this.clearBackgroundStatusCheck();
 	},
 	// Lifecycle hook: unmounted
