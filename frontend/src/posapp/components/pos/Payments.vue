@@ -1421,14 +1421,11 @@ export default {
 		// Highlight and focus the submit button when payment screen opens
 		handleShowPayment(data) {
 			if (data === "true") {
-				// Sungas Phase-5: pre-apply LPG cash-overage as Rounding
-				// Adjustment so the PAY dialog opens with the correct
-				// Rounded Total and the default Cash payment is auto-filled
-				// at rounded_total (not grand_total). Without this, clicking
-				// the \u20a62,000 quick-cash pill misclassifies the \u20a620 as
-				// physical change owed to the customer.
-				this._applyLpgCashOverageOnOpen();
-
+				// NOTE: _applyLpgCashOverageOnOpen no longer called here
+				// because show_payment fires BEFORE send_invoice_doc_payment;
+				// at this point this.invoice_doc is still stale. The
+				// overage logic now runs inside the send_invoice_doc_payment
+				// handler below, AFTER the new invoice_doc is assigned.
 				this.paymentVisible = true;
 				this.$nextTick(() => {
 					setTimeout(() => {
@@ -2900,6 +2897,11 @@ export default {
 			// Listen to various event bus events for POS actions
 			this.eventBus.on("send_invoice_doc_payment", (invoice_doc) => {
 				this.invoice_doc = invoice_doc;
+				// Sungas Phase-5: apply LPG cash-overage NOW (right after
+				// invoice_doc lands here). Bumps invoice_doc.rounded_total
+				// and rounding_adjustment before the default_payment
+				// auto-fill below picks up the correct rounded amount.
+				this._applyLpgCashOverageOnOpen();
 				const default_payment = this.invoice_doc.payments.find((payment) => payment.default === 1);
 				const hasReturnPayments = this.invoice_doc.payments.some(
 					(payment) => Math.abs(this.flt(payment.amount || 0, this.currency_precision)) > 0,
