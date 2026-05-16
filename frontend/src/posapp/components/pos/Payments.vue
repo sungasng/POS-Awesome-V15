@@ -1421,6 +1421,14 @@ export default {
 		// Highlight and focus the submit button when payment screen opens
 		handleShowPayment(data) {
 			if (data === "true") {
+				// Sungas Phase-5: pre-apply LPG cash-overage as Rounding
+				// Adjustment so the PAY dialog opens with the correct
+				// Rounded Total and the default Cash payment is auto-filled
+				// at rounded_total (not grand_total). Without this, clicking
+				// the \u20a62,000 quick-cash pill misclassifies the \u20a620 as
+				// physical change owed to the customer.
+				this._applyLpgCashOverageOnOpen();
+
 				this.paymentVisible = true;
 				this.$nextTick(() => {
 					setTimeout(() => {
@@ -1436,6 +1444,71 @@ export default {
 			} else {
 				this.paymentVisible = false;
 				this.highlightSubmit = false;
+			}
+		},
+
+		// Phase-5 Sungas helper: derive total LPG cash overage from item
+		// rows where the cashier typed a higher Total Amount (posa_amount_due)
+		// than the computed goods value (qty * rate). Set rounded_total and
+		// rounding_adjustment so the PAY dialog and the default Cash payment
+		// reflect the rounded amount the customer is actually paying.
+		_applyLpgCashOverageOnOpen() {
+			if (!this.invoice_doc || !Array.isArray(this.invoice_doc.items)) {
+				return;
+			}
+			let totalOverage = 0;
+			for (const row of this.invoice_doc.items) {
+				const amountDue = Number(row.posa_amount_due) || 0;
+				const qty = Number(row.qty) || 0;
+				const rate = Number(row.rate) || 0;
+				const goodsValue = qty * rate;
+				if (amountDue > 0 && rate > 0) {
+					const diff = amountDue - goodsValue;
+					// Only OVER counts; under = treat as not edited.
+					if (diff > 0.01 && diff <= rate) {
+						totalOverage += diff;
+					}
+				}
+			}
+			// Round to 2dp (kobo precision).
+			totalOverage = Math.round(totalOverage * 100) / 100;
+
+			const grandTotal = Number(this.invoice_doc.grand_total) || 0;
+			if (totalOverage > 0.01) {
+				this.invoice_doc.rounding_adjustment = totalOverage;
+				this.invoice_doc.rounded_total =
+					Math.round((grandTotal + totalOverage) * 100) / 100;
+				if (this.invoice_doc.base_rounding_adjustment !== undefined) {
+					this.invoice_doc.base_rounding_adjustment = totalOverage;
+				}
+				if (this.invoice_doc.base_rounded_total !== undefined) {
+					this.invoice_doc.base_rounded_total = this.invoice_doc.rounded_total;
+				}
+				// Auto-fill the default Cash payment with the rounded total so
+				// Outstanding hits 0 without the cashier clicking quick-cash.
+				const payments = Array.isArray(this.invoice_doc.payments)
+					? this.invoice_doc.payments
+					: [];
+				const defaultCash = payments.find(
+					(p) =>
+						p &&
+						p.default === 1 &&
+						String(p.mode_of_payment || "").toLowerCase().includes("cash"),
+				);
+				if (defaultCash) {
+					defaultCash.amount = this.invoice_doc.rounded_total;
+					if (defaultCash.base_amount !== undefined) {
+						defaultCash.base_amount = this.invoice_doc.rounded_total;
+					}
+				}
+				console.log(
+					"[LPG-Overage] applied",
+					{
+						grandTotal,
+						totalOverage,
+						roundedTotal: this.invoice_doc.rounded_total,
+					},
+				);
 			}
 		},
 		// Reset all cash payments to zero
