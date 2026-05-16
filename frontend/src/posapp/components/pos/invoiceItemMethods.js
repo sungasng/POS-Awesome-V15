@@ -4273,9 +4273,12 @@ export default {
 				// missing or BELOW the goods value. If the cashier typed a
 				// higher amount in the Total Amount field (a valid cash
 				// overage we book to Rounding Adjustment), preserve it.
+				// Direct reactive write (no setFormatedQty) because that
+				// helper also calls calc_stock_qty which would corrupt
+				// the row's stock_qty.
 				const currentAmount = Number(it.posa_amount_due) || 0;
 				if (currentAmount < newAmount) {
-					this.setFormatedQty(it, "posa_amount_due", null, false, newAmount);
+					it.posa_amount_due = newAmount;
 				}
 			} else {
 				missing.push(it.item_code);

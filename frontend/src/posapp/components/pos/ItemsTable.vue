@@ -1268,9 +1268,18 @@ export default {
 				return;
 			}
 			this.setFormatedQty(item, "qty", null, false, newQty);
-			// Persist the typed cash so the Total Amount field re-displays it
-			// AND so the backend `apply_cash_overage` hook can book the diff.
-			this.setFormatedQty(item, "posa_amount_due", null, false, amount);
+			// Sungas Phase-5: persist the cashier-typed cash on
+			// `posa_amount_due` so:
+			//   1. The Total Amount field re-displays the typed cash (not
+			//      the computed qty*rate, which floors and loses the overage).
+			//   2. The backend `apply_cash_overage` hook can book the
+			//      `posa_amount_due - qty*rate` overage as a Rounding
+			//      Adjustment to the Round Off Expense account.
+			// Direct write (Vue 3 reactive) rather than setFormatedQty
+			// because the latter also runs calc_stock_qty(item, value),
+			// which would incorrectly set Stock QTY = 2000 when value is
+			// the cash amount.
+			item.posa_amount_due = amount;
 		},
 		// Display helper: prefer cashier-typed cash amount when it sits
 		// within one tier-rate unit above the computed goods value (= valid
