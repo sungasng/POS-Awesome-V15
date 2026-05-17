@@ -20,7 +20,10 @@ _asset_version = get_build_version()
 app_include_js = [
     f"/assets/posawesome/dist/js/loader.js?v={_asset_version}",
     f"/assets/posawesome/js/posa_kg_calculator.js?v={_asset_version}",
-    f"/assets/posawesome/js/posa_tier_pricing.js?v={_asset_version}",
+    # Phase-5: removed posa_tier_pricing.js (the legacy on-form banner).
+    # Backend strict-mode `apply_tiered_pricing` already throws when no
+    # matching tier is found, and the cart's per-row display already
+    # shows the tier rate -- so the banner became redundant chatter.
 ]
 
 app_include_css = [

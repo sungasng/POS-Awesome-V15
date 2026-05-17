@@ -77,3 +77,23 @@ def apply_cash_overage(doc, method=None):
     if hasattr(doc, "outstanding_amount"):
         paid = flt(getattr(doc, "paid_amount", 0) or 0)
         doc.outstanding_amount = flt(doc.rounded_total - paid, 2)
+
+    # Phase-5 Sungas: suppress Frappe's auto-computed change_amount /
+    # write_off_amount. Without this, Frappe sees paid_amount (\u20a62,000) >
+    # grand_total (\u20a61,980) and books the \u20a620 surplus as change owed to
+    # the customer (Cash Sales [outlet] Cr 20 + Trade Receivables Dr 20).
+    # The rounding_adjustment we set above ALREADY books the \u20a620 to the
+    # Round Off Expense account; treating it again as change would
+    # double-count and leave a phantom \u20a620 outstanding (=> "Partly Paid").
+    if hasattr(doc, "change_amount"):
+        doc.change_amount = 0
+    if hasattr(doc, "base_change_amount"):
+        doc.base_change_amount = 0
+    if hasattr(doc, "write_off_amount"):
+        # Only suppress write_off when it was implicitly added by Frappe's
+        # surplus-payment handling (i.e. equals our total_overage). A
+        # cashier-typed write_off should be respected.
+        if abs(flt(doc.write_off_amount) - total_overage) < TOLERANCE:
+            doc.write_off_amount = 0
+            if hasattr(doc, "base_write_off_amount"):
+                doc.base_write_off_amount = 0
