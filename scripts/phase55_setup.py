@@ -157,12 +157,22 @@ def _next_account_number(parent_account, prefix_digits):
         filters={"parent_account": parent_account, "is_group": 0},
         fields=["account_number"],
     )
+    # Also collect ALL account numbers across the whole company so we never
+    # collide with a number used elsewhere (e.g. another parent group).
+    company_rows = frappe.get_all(
+        "Account",
+        filters={"company": COMPANY, "is_group": 0},
+        fields=["account_number"],
+    )
     used = set()
-    for r in rows:
+    for r in rows + company_rows:
         n = r.get("account_number")
         if n and str(n).isdigit():
             used.add(int(n))
-    candidate = (max(used) + 1) if used else int(f"{prefix_digits}01")
+    # Start from the lowest valid candidate for this prefix range
+    # (e.g. prefix '11' -> 1101) and scan up.
+    start = int(f"{prefix_digits}01")
+    candidate = start
     while candidate in used:
         candidate += 1
     return candidate
