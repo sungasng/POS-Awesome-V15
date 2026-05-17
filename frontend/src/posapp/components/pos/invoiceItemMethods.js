@@ -1613,6 +1613,13 @@ export default {
 		this.items = data.items || [];
 		this.packed_items = data.packed_items || [];
 		console.log("Items set:", this.items.length, "items");
+		// Sungas Phase-5: re-stamp cashier-typed posa_amount_due on the
+		// freshly-loaded items so lpgCashOverage / get_payments / the
+		// backend apply_cash_overage hook all still see the right value
+		// after this backend save/reload round-trip wiped the custom field.
+		if (typeof this.restampLpgTypedCash === "function") {
+			this.restampLpgTypedCash();
+		}
 
 		if (data.is_return && data.return_against) {
 			this.items.forEach((item) => {

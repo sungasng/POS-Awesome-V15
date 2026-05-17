@@ -1474,29 +1474,21 @@ export default {
 			// value after a save/reload round-trip wipes the custom field.
 			this.$nextTick(() => this.restampLpgTypedCash());
 		},
-		// Phase-5 Sungas: track cashier-typed cash by item_code on this
-		// Invoice component instance. The stash survives load_invoice
-		// (which replaces this.items[]) and is the source of truth for
-		// the cart's bottom Total panel after a backend round-trip.
+		// Phase-5 Sungas: stash now lives in Pinia (invoiceStore.lpgTypedCash).
+		// These handlers preserve backwards-compat but delegate to the store.
 		handleLpgAmountDueChanged({ item_code, amount } = {}) {
 			if (!item_code) return;
-			const value = Number(amount) || 0;
-			if (value <= 0) {
-				delete this.lpgTypedCash[item_code];
-			} else {
-				this.lpgTypedCash = { ...this.lpgTypedCash, [item_code]: value };
-			}
-			// Immediately restamp in case items[] already has the row.
+			this.invoiceStore?.setLpgTypedCash(item_code, amount);
 			this.restampLpgTypedCash();
 		},
 		clearLpgTypedCashStash() {
-			this.lpgTypedCash = {};
+			this.invoiceStore?.clearLpgTypedCash();
 		},
 		restampLpgTypedCash() {
-			const stash = this.lpgTypedCash || {};
-			if (!Object.keys(stash).length || !Array.isArray(this.items)) return;
+			const stash = this.invoiceStore?.lpgTypedCash;
+			if (!stash || !stash.size || !Array.isArray(this.items)) return;
 			this.items.forEach((item) => {
-				const typed = Number(stash[item.item_code]) || 0;
+				const typed = Number(stash.get(item.item_code)) || 0;
 				if (typed <= 0) return;
 				const qty = Number(item.qty) || 0;
 				const rate = Number(item.rate) || 0;

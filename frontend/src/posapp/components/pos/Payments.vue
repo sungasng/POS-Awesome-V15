@@ -1463,44 +1463,52 @@ export default {
 			}
 		},
 
-		// Phase-5 Sungas helper: derive total LPG cash overage from item
-		// rows where the cashier typed a higher Total Amount (posa_amount_due)
-		// than the computed goods value (qty * rate). Set rounded_total and
-		// rounding_adjustment so the PAY dialog and the default Cash payment
-		// reflect the rounded amount the customer is actually paying.
+		// Phase-5 Sungas helper: derive total LPG cash overage from the
+		// shared Pinia stash (invoiceStore.lpgTypedCash). The stash is
+		// populated by ItemsTable.handleAmountDueChange every time the
+		// cashier types in the expanded-row Total Amount field, and
+		// survives all backend save/reload round-trips. Set rounded_total
+		// and rounding_adjustment so the PAY dialog and the default Cash
+		// payment reflect the rounded amount the customer is actually paying.
 		_applyLpgCashOverageOnOpen() {
 			if (!this.invoice_doc || !Array.isArray(this.invoice_doc.items)) {
 				return;
 			}
-			const stash = this._lpgOverageByCode || new Map();
+			const storeStash = this.invoiceStore?.lpgTypedCash;
+			const legacyStash = this._lpgOverageByCode || new Map();
 			let totalOverage = 0;
+			let usedSource = "none";
 			for (const row of this.invoice_doc.items) {
 				const qty = Number(row.qty) || 0;
 				const rate = Number(row.rate) || 0;
 				const goodsValue = qty * rate;
 				if (rate <= 0) continue;
-				// Prefer the cashier-typed cash stashed by ItemsTable; fall
-				// back to posa_amount_due on the row when stash is empty
-				// (e.g. resumed draft). Stash key is item_code; if multiple
-				// rows of the same item code exist, the stash applies to
-				// the first match only.
-				let amountDue = Number(stash.get(row.item_code)) || 0;
+				// Source priority: Pinia store -> eventBus stash -> row field.
+				let amountDue = 0;
+				if (storeStash && typeof storeStash.get === "function") {
+					amountDue = Number(storeStash.get(row.item_code)) || 0;
+					if (amountDue) usedSource = "store";
+				}
+				if (!amountDue) {
+					amountDue = Number(legacyStash.get(row.item_code)) || 0;
+					if (amountDue) usedSource = "eventBus";
+				}
 				if (!amountDue) {
 					amountDue = Number(row.posa_amount_due) || 0;
+					if (amountDue) usedSource = "row.posa_amount_due";
 				}
 				if (amountDue > 0) {
 					const diff = amountDue - goodsValue;
 					if (diff > 0.01 && diff <= rate) {
 						totalOverage += diff;
 						// Restamp posa_amount_due on the row so the backend
-						// apply_cash_overage hook books \u20a620 to Round Off
-						// Expense on submit. (The pre-PAY load_invoice wiped
-						// this field; we restore it from the stash here.)
+						// apply_cash_overage hook books the overage to
+						// Round Off Expense on submit. (The pre-PAY
+						// load_invoice wiped this field; we restore it here.)
 						row.posa_amount_due = amountDue;
 					}
 				}
 			}
-			// Round to 2dp (kobo precision).
 			totalOverage = Math.round(totalOverage * 100) / 100;
 
 			const grandTotal = Number(this.invoice_doc.grand_total) || 0;
@@ -1514,8 +1522,6 @@ export default {
 				if (this.invoice_doc.base_rounded_total !== undefined) {
 					this.invoice_doc.base_rounded_total = this.invoice_doc.rounded_total;
 				}
-				// Auto-fill the default Cash payment with the rounded total so
-				// Outstanding hits 0 without the cashier clicking quick-cash.
 				const payments = Array.isArray(this.invoice_doc.payments)
 					? this.invoice_doc.payments
 					: [];
@@ -1535,12 +1541,12 @@ export default {
 					grandTotal,
 					totalOverage,
 					roundedTotal: this.invoice_doc.rounded_total,
-					source: stash.size ? "stash" : "row.posa_amount_due",
+					source: usedSource,
 				});
 			} else {
 				console.log("[LPG-Overage] no overage to apply", {
 					grandTotal,
-					stashSize: stash.size,
+					stashSize: storeStash?.size || 0,
 				});
 			}
 		},

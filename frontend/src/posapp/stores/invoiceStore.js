@@ -243,10 +243,32 @@ export const useInvoiceStore = defineStore("invoice", () => {
 		touch();
 	};
 
+	// Phase-5 Sungas: shared stash of cashier-typed cash amounts keyed by
+	// item_code. The custom posa_amount_due field doesn't survive backend
+	// save/reload round-trips, so this Pinia-level map is the source of
+	// truth across ItemsTable, Invoice, and Payments components.
+	const lpgTypedCash = reactive(new Map());
+	const setLpgTypedCash = (itemCode, amount) => {
+		if (!itemCode) return;
+		const n = Number(amount) || 0;
+		if (n <= 0) {
+			lpgTypedCash.delete(itemCode);
+		} else {
+			lpgTypedCash.set(itemCode, n);
+		}
+		touch();
+	};
+	const clearLpgTypedCash = () => {
+		lpgTypedCash.clear();
+		touch();
+	};
+	const getLpgTypedCash = (itemCode) => Number(lpgTypedCash.get(itemCode)) || 0;
+
 	const clear = () => {
 		invoiceDoc.value = null;
 		clearItems();
 		packedItems.value = [];
+		lpgTypedCash.clear();
 		touch();
 	};
 
@@ -304,6 +326,11 @@ export const useInvoiceStore = defineStore("invoice", () => {
 		setPackedItems,
 		clear,
 		recalculateTotals, // Exposed for manual trigger if needed
+		// Phase-5 Sungas: typed cash stash + helpers
+		lpgTypedCash,
+		setLpgTypedCash,
+		clearLpgTypedCash,
+		getLpgTypedCash,
 	};
 });
 

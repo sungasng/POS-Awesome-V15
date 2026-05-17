@@ -1280,10 +1280,17 @@ export default {
 			// which would incorrectly set Stock QTY = 2000 when value is
 			// the cash amount.
 			item.posa_amount_due = amount;
-			// Sungas Phase-5: stash this typed cash so Payments.vue can
-			// reconstruct the LPG cash-overage even after the pre-PAY
-			// `load_invoice` round-trip wipes posa_amount_due from
-			// invoice_doc.items.
+			// Sungas Phase-5: write to the shared Pinia stash so:
+			//   1. Invoice.vue lpgCashOverage computed (and bottom cart Total)
+			//      can fall back to it when load_invoice wipes posa_amount_due.
+			//   2. Payments.vue _applyLpgCashOverageOnOpen reads it for the
+			//      PAY dialog Rounded Total / Cash / Outstanding fields.
+			//   3. get_payments() in invoiceItemMethods.js adds it to the
+			//      default cash payment so every async recompute settles
+			//      Cash = subtotal + overage.
+			this.invoiceStore.setLpgTypedCash(item.item_code, amount);
+			// Keep the eventBus emit as a no-op courtesy (some legacy
+			// listeners may rely on it).
 			this.eventBus?.emit("lpg_amount_due_changed", {
 				item_code: item.item_code,
 				amount,
