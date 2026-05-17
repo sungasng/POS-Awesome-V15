@@ -1,29 +1,16 @@
 """
-Phase 5 / P1 — Clone the verified "POS - Pedro (Test)" POS Profile to every
-other outlet so all 21 branches can log in and make sales.
+Phase 5.5 — Clone POS Profile to every Sungas outlet using OUTLET-SPECIFIC
+cash/transfer/POS-incoming accounts AND cost centers AND region tagging.
 
-Source of truth (per Phase-5 handoff):
-    - 1 working test profile already exists: "POS - Pedro (Test)" -> Pedro - SCL
-    - 20 other outlets still need their own POS Profile
-    - Same Customer Group (Retail), Currency (NGN), Price List (SCL Standard
-      Selling), Payment Methods (Cash default + Bank Draft), Write-Off and
-      Change-Amount accounts.
-    - Territory per outlet is derived from the warehouse_name (matches the
-      lpg_pricing.get_pos_profile_territory contract).
-    - Applicable Users: any User whose email matches the outlet token
-      (warehouse_name lower-cased; e.g., 'Ikeja' -> users with '@<warehouse>')
-      OR an explicit OUTLET_CASHIER_MAP below.
-
-Idempotent: if a profile for the outlet already exists it is UPDATED
-(payments/users refreshed) rather than re-created. The verified test profile
-"POS - Pedro (Test)" is left untouched.
+Requires `phase55_setup.py` and `install_pos_print_format.py` to have been
+run on the bench first (renames cost centers, creates missing accounts /
+branches / region doctype, installs the 58mm Print Format).
 
 Run on bench:
+    curl -fsSL https://raw.githubusercontent.com/sungasng/POS-Awesome-V15/develop/scripts/clone_pos_profiles_to_outlets.py \
+      -o /tmp/clone_pos_profiles_to_outlets.py && \
     bench --site sungasmis.v.frappe.cloud execute \
-        "exec(open('/tmp/clone_pos_profiles_to_outlets.py').read())"
-
-CUSTOMISATION: edit OUTLET_CASHIER_MAP below to assign specific cashiers
-to specific outlets BEFORE running on production.
+      "exec(open('/tmp/clone_pos_profiles_to_outlets.py').read())"
 """
 
 from __future__ import annotations
@@ -34,144 +21,98 @@ from typing import Optional
 import frappe
 
 
-# -----------------------------------------------------------------------------
-# CONFIG
-# -----------------------------------------------------------------------------
 COMPANY = "SUNGAS COMPANY LIMITED"
 PRICE_LIST = "SCL Standard Selling"
 CURRENCY = "NGN"
 CUSTOMER_GROUP = "Retail"
+DEFAULT_PRINT_FORMAT = "Sungas Thermal 58mm"
 
-# Always keep this profile alone (it's the manually-verified one).
 PROTECTED_PROFILES = {"POS - Pedro (Test)"}
 
 PAYMENTS = (
-    # (mode_of_payment, default, amount)
     ("Cash", 1, 0),
     ("Bank Draft", 0, 0),
 )
 
-# Skip these warehouses (root/group/transit/special). Anything else that
-# is a leaf warehouse under COMPANY gets a POS Profile.
 SKIP_WAREHOUSE_TOKENS = (
-    "transit",
-    "in transit",
-    "all warehouses",
-    "rejected",
-    "stores",  # generic 'Stores - <abbr>' default warehouse, not an outlet
-    "work in progress",
-    "finished goods",
+    "transit", "in transit", "all warehouses", "rejected",
+    "stores", "work in progress", "finished goods",
 )
 
-# Optional: explicit override mapping {warehouse_name: [user_emails]}.
-# If a warehouse is here, only those users are applicable for the profile.
-# If absent, falls back to USERS_AUTODISCOVERY (see _resolve_cashiers).
 OUTLET_CASHIER_MAP: dict[str, list[str]] = {
-    # Example:
-    # "Ikeja": ["cashier1@sungas.org", "cashier2@sungas.org"],
+    # Fill before running on prod: { "Pedro": ["cashier@sungas.org", ...] }
 }
 
-# When OUTLET_CASHIER_MAP doesn't have an entry, attempt to match users by:
-#   user.email contains <warehouse_token>  OR
-#   user.username contains <warehouse_token>  OR
-#   user.full_name contains <warehouse_token>
-# Always include Administrator.
 USERS_AUTODISCOVERY = True
 
+OUTLET_ACCT_ALIASES: dict[str, list[str]] = {
+    "Ebutte": ["Ebutte", "Ebute"],
+    "Iju-Otta": ["Iju-Otta", "Iju-Ota", "Iju Ota"],
+    "Osi-Otta": ["Osi-Otta", "Osi-Ota", "Osi Ota"],
+}
 
-# -----------------------------------------------------------------------------
-# HELPERS (reused from create_pos_profile_test.py)
-# -----------------------------------------------------------------------------
-def _pick_cost_center() -> str:
+OUTLET_REGION: dict[str, str] = {
+    "Maba": "Ogun 1", "Sefu": "Ogun 1", "Ebutte": "Ogun 1", "Aseese": "Ogun 1",
+    "Itele": "Ogun 2", "Iju-Otta": "Ogun 2", "Osi-Otta": "Ogun 2", "Ijoko": "Ogun 2",
+    "Ikeja": "Lagos 1", "Oworo": "Lagos 1", "Pedro": "Lagos 1",
+    "Bolade": "Lagos 1", "Mafoluku": "Lagos 1",
+    "Eleme": "Rivers 1", "Reclamation": "Rivers 1",
+    "Ekehuan": "Edo 1", "Upper Mission": "Edo 1", "Idowina": "Edo 1",
+    "Idokpa": "Edo 1", "Okhuoromi": "Edo 1",
+    "Asaba": "Delta 1",
+}
+
+
+# ---------------------------------------------------------------- HELPERS
+def _alias_tokens(outlet: str) -> list[str]:
+    return OUTLET_ACCT_ALIASES.get(outlet, [outlet])
+
+
+def _find_account(outlet: str, search: str) -> Optional[str]:
+    for token in _alias_tokens(outlet):
+        rows = frappe.get_all(
+            "Account",
+            filters={
+                "company": COMPANY, "is_group": 0, "disabled": 0,
+                "account_name": ["like", f"%{search}%"],
+            },
+            fields=["name", "account_name"],
+        )
+        for r in rows:
+            n = r["account_name"].lower().replace("-", " ").replace("  ", " ")
+            if token.lower().replace("-", " ") in n:
+                return r["name"]
+    return None
+
+
+def _find_cost_center(outlet: str) -> Optional[str]:
     rows = frappe.get_all(
         "Cost Center",
         filters={
-            "company": COMPANY,
-            "is_group": 0,
-            "cost_center_name": ["like", "%Sales and Marketing%"],
+            "company": COMPANY, "is_group": 0,
+            "cost_center_name": ["like", f"%Sales and Marketing {outlet}%"],
         },
         pluck="name",
-        order_by="name",
         limit=1,
     )
     if rows:
         return rows[0]
-    rows = frappe.get_all(
-        "Cost Center",
-        filters={"company": COMPANY, "is_group": 0},
-        pluck="name",
-        order_by="name",
-        limit=1,
-    )
-    if rows:
-        return rows[0]
-    main = frappe.db.get_value("Company", COMPANY, "cost_center")
-    if main:
-        return main
-    raise RuntimeError(f"No cost center found for company {COMPANY}.")
-
-
-def _pick_account_by(preferences: list[dict]) -> Optional[str]:
-    for filters in preferences:
-        base = {"company": COMPANY, "is_group": 0, "disabled": 0}
-        base.update(filters)
+    # Fallback: try any of the outlet aliases (Ebute / Iju-Ota / Osi-Ota).
+    for alias in _alias_tokens(outlet):
+        if alias == outlet:
+            continue
         rows = frappe.get_all(
-            "Account", filters=base, pluck="name", order_by="name", limit=1
+            "Cost Center",
+            filters={
+                "company": COMPANY, "is_group": 0,
+                "cost_center_name": ["like", f"%Sales and Marketing {alias}%"],
+            },
+            pluck="name",
+            limit=1,
         )
         if rows:
             return rows[0]
     return None
-
-
-def _pick_cash_account() -> str:
-    abbr = frappe.db.get_value("Company", COMPANY, "abbr") or "SCL"
-    rows = frappe.get_all(
-        "Account",
-        filters={"company": COMPANY, "is_group": 0, "account_type": "Cash"},
-        pluck="name",
-        order_by="name",
-        limit=1,
-    )
-    if rows:
-        return rows[0]
-    rows = frappe.get_all(
-        "Account",
-        filters={"company": COMPANY, "is_group": 0, "name": ["like", "%Cash%"]},
-        pluck="name",
-        order_by="name",
-        limit=1,
-    )
-    if rows:
-        return rows[0]
-    raise RuntimeError(
-        f"No Cash account found on {COMPANY}. Create one (e.g. 'Cash - {abbr}') first."
-    )
-
-
-def _pick_writeoff_account(cash_account: str) -> str:
-    val = frappe.db.get_value("Company", COMPANY, "write_off_account")
-    if val:
-        return val
-    val = _pick_account_by([{"account_type": "Round Off"}])
-    if val:
-        return val
-    val = _pick_account_by([
-        {"name": ["like", "%Write Off%"]},
-        {"account_name": ["like", "%Write Off%"]},
-        {"name": ["like", "%Discount Allowed%"]},
-        {"account_name": ["like", "%Discount Allowed%"]},
-    ])
-    if val:
-        return val
-    val = _pick_account_by([{"root_type": "Expense"}])
-    if val:
-        return val
-    return cash_account
-
-
-def _pick_change_amount_account(cash_account: str) -> str:
-    val = frappe.db.get_value("Company", COMPANY, "default_cash_account")
-    return val or cash_account
 
 
 def _ensure_mop_default_account(mop_name: str, default_cash_account: str):
@@ -186,19 +127,8 @@ def _ensure_mop_default_account(mop_name: str, default_cash_account: str):
     mop.save(ignore_permissions=True)
 
 
-# -----------------------------------------------------------------------------
-# OUTLET ENUMERATION
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------- LIST OUTLETS
 def _list_outlet_warehouses() -> list[dict]:
-    """
-    Return every leaf warehouse under COMPANY that looks like an outlet.
-    A warehouse is considered an outlet when:
-      - is_group = 0
-      - disabled = 0
-      - warehouse_name does not match any SKIP_WAREHOUSE_TOKENS
-      - a Territory exists with the same name as the warehouse_name
-        (the lpg_pricing tier engine relies on this contract).
-    """
     rows = frappe.get_all(
         "Warehouse",
         filters={"company": COMPANY, "is_group": 0, "disabled": 0},
@@ -213,7 +143,6 @@ def _list_outlet_warehouses() -> list[dict]:
         wlow = wname.lower()
         if any(token in wlow for token in SKIP_WAREHOUSE_TOKENS):
             continue
-        # Require a matching Territory so tier pricing works out of the box.
         if not frappe.db.exists("Territory", wname):
             print(f"  SKIP {row['name']}: no Territory named {wname!r} (tier lookup would fail).")
             continue
@@ -224,21 +153,17 @@ def _list_outlet_warehouses() -> list[dict]:
     return outlets
 
 
-# -----------------------------------------------------------------------------
-# CASHIER RESOLUTION
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------- CASHIERS
 def _resolve_cashiers(warehouse_name: str) -> list[str]:
     explicit = OUTLET_CASHIER_MAP.get(warehouse_name)
     if explicit:
         return ["Administrator"] + [u for u in explicit if frappe.db.exists("User", u)]
     if not USERS_AUTODISCOVERY:
         return ["Administrator"]
-    token = warehouse_name.lower().replace(" ", "")
+    token = warehouse_name.lower().replace(" ", "").replace("-", "")
     users = frappe.get_all(
         "User",
-        filters={
-            "enabled": 1,
-        },
+        filters={"enabled": 1},
         or_filters={
             "email": ["like", f"%{token}%"],
             "username": ["like", f"%{token}%"],
@@ -250,26 +175,44 @@ def _resolve_cashiers(warehouse_name: str) -> list[str]:
     return ["Administrator"] + [u for u in users if u != "Administrator"]
 
 
-# -----------------------------------------------------------------------------
-# UPSERT
-# -----------------------------------------------------------------------------
-def _upsert_profile(outlet: dict, cost_center: str, cash_account: str,
-                    writeoff_account: str, change_amount_account: str,
-                    income_account: str) -> tuple[str, str]:
-    """
-    Returns (profile_name, action) where action ∈ {"CREATED", "UPDATED", "SKIPPED"}.
-    """
+# ---------------------------------------------------------------- UPSERT
+def _upsert_profile(outlet: dict) -> tuple[str, str, dict]:
     wname = outlet["warehouse_name"]
     profile_name = f"POS - {wname}"
 
     if profile_name in PROTECTED_PROFILES:
-        return profile_name, "SKIPPED-protected"
+        return profile_name, "SKIPPED-protected", {}
+
+    cash = _find_account(wname, "Cash Sales")
+    transfer = _find_account(wname, "Incoming Transfer")
+    pos_incoming = _find_account(wname, "POS Incoming")
+    cost_center = _find_cost_center(wname)
+
+    missing = []
+    if not cash:
+        missing.append("cash")
+    if not transfer:
+        missing.append("transfer")
+    if not pos_incoming:
+        missing.append("pos_incoming")
+    if not cost_center:
+        missing.append("cost_center")
+    if missing:
+        return profile_name, f"SKIPPED-missing:{','.join(missing)}", {
+            "cash": cash, "transfer": transfer, "pos_incoming": pos_incoming,
+            "cost_center": cost_center,
+        }
 
     users = _resolve_cashiers(wname)
+
+    # Three payment methods per outlet, each with its own per-outlet account.
     payment_rows = [
-        {"mode_of_payment": mop, "default": is_default, "amount": amount}
-        for mop, is_default, amount in PAYMENTS
+        {"mode_of_payment": "Cash", "default": 1, "amount": 0, "account": cash},
+        {"mode_of_payment": "Bank Draft", "default": 0, "amount": 0, "account": transfer},
     ]
+    if frappe.db.exists("Mode of Payment", "POS"):
+        payment_rows.append({"mode_of_payment": "POS", "default": 0, "amount": 0,
+                              "account": pos_incoming})
 
     base_doc = {
         "doctype": "POS Profile",
@@ -281,12 +224,21 @@ def _upsert_profile(outlet: dict, cost_center: str, cash_account: str,
         "selling_price_list": PRICE_LIST,
         "customer_group": CUSTOMER_GROUP,
         "territory": wname,
-        "write_off_account": writeoff_account,
+        "write_off_account": cost_center.split(" - ", 1)[0] if False else
+            frappe.db.get_value("Company", COMPANY, "round_off_account"),
         "write_off_cost_center": cost_center,
-        "account_for_change_amount": change_amount_account,
-        "income_account": income_account,
+        "account_for_change_amount": cash,
+        "income_account": frappe.db.get_value("Company", COMPANY, "default_income_account"),
+        "print_format": DEFAULT_PRINT_FORMAT
+            if frappe.db.exists("Print Format", DEFAULT_PRINT_FORMAT) else None,
         "disabled": 0,
     }
+
+    # Auto-fill MoP default_account so resumed sales still post correctly.
+    _ensure_mop_default_account("Cash", cash)
+    _ensure_mop_default_account("Bank Draft", transfer)
+    if frappe.db.exists("Mode of Payment", "POS"):
+        _ensure_mop_default_account("POS", pos_incoming)
 
     if frappe.db.exists("POS Profile", profile_name):
         prof = frappe.get_doc("POS Profile", profile_name)
@@ -300,105 +252,73 @@ def _upsert_profile(outlet: dict, cost_center: str, cash_account: str,
         prof.payments = []
         for row in payment_rows:
             prof.append("payments", row)
+        # Tag the Region accounting dimension if the doctype + dimension exist.
+        region = OUTLET_REGION.get(wname)
+        if region and hasattr(prof, "sungas_region"):
+            prof.sungas_region = region
         prof.save(ignore_permissions=True)
-        return profile_name, "UPDATED"
+        return profile_name, "UPDATED", base_doc
 
     doc = frappe.get_doc({
         **base_doc,
         "applicable_for_users": [{"user": u} for u in users],
         "payments": payment_rows,
     })
+    region = OUTLET_REGION.get(wname)
+    if region and hasattr(doc, "sungas_region"):
+        doc.sungas_region = region
     doc.insert(ignore_permissions=True)
-    return profile_name, "CREATED"
+    return profile_name, "CREATED", base_doc
 
 
-# -----------------------------------------------------------------------------
-# MAIN
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------- MAIN
 def main():
-    print("=" * 72)
-    print(" Clone POS Profile to ALL outlets")
-    print("=" * 72)
+    print("=" * 78)
+    print(" Clone POS Profile to ALL outlets (Phase-5.5 multi-account version)")
+    print("=" * 78)
 
-    # Prereqs
     if not frappe.db.exists("Company", COMPANY):
         print(f"  ERROR: Company {COMPANY!r} missing.")
         sys.exit(1)
-    if not frappe.db.exists("Price List", PRICE_LIST):
-        print(f"  ERROR: Price List {PRICE_LIST!r} missing.")
-        sys.exit(1)
-    if not frappe.db.exists("Customer Group", CUSTOMER_GROUP):
-        print(f"  ERROR: Customer Group {CUSTOMER_GROUP!r} missing.")
-        sys.exit(1)
-    for mop, _, _ in PAYMENTS:
-        if not frappe.db.exists("Mode of Payment", mop):
-            print(f"  ERROR: Mode of Payment {mop!r} missing.")
-            sys.exit(1)
-
-    cost_center = _pick_cost_center()
-    cash_account = _pick_cash_account()
-    writeoff_account = _pick_writeoff_account(cash_account)
-    change_amount_account = _pick_change_amount_account(cash_account)
-    income_account = frappe.db.get_value("Company", COMPANY, "default_income_account")
-    print(f"  cost_center           : {cost_center}")
-    print(f"  cash account          : {cash_account}")
-    print(f"  write-off account     : {writeoff_account}")
-    print(f"  change-amount account : {change_amount_account}")
-    print(f"  income account        : {income_account}")
-    print()
-
-    # Patch MoP default_account once globally (idempotent).
-    for mop, _, _ in PAYMENTS:
-        _ensure_mop_default_account(mop, cash_account)
+    if not frappe.db.exists("Print Format", DEFAULT_PRINT_FORMAT):
+        print(f"  WARNING: Print Format {DEFAULT_PRINT_FORMAT!r} not installed.")
+        print("           Run install_pos_print_format.py first to ship the 58mm thermal layout.")
 
     outlets = _list_outlet_warehouses()
-    if not outlets:
-        print("  No outlet warehouses found. Nothing to do.")
-        sys.exit(0)
-
-    print(f"  Found {len(outlets)} candidate outlet warehouses.")
+    print(f"  Found {len(outlets)} outlet warehouses.")
     print()
 
-    summary = {"CREATED": 0, "UPDATED": 0, "SKIPPED-protected": 0, "ERRORED": 0}
-    errors: list[tuple[str, str]] = []
-
+    summary = {}
+    errors = []
     for outlet in outlets:
         try:
-            profile_name, action = _upsert_profile(
-                outlet,
-                cost_center=cost_center,
-                cash_account=cash_account,
-                writeoff_account=writeoff_account,
-                change_amount_account=change_amount_account,
-                income_account=income_account,
-            )
+            name, action, base = _upsert_profile(outlet)
             summary[action] = summary.get(action, 0) + 1
-            users = _resolve_cashiers(outlet["warehouse_name"])
-            print(f"  [{action:<18}] {profile_name:<35} -> "
-                  f"{outlet['warehouse']:<25} users={len(users)}")
+            print(f"  [{action:<32}] {name:<35}")
+            if action.startswith(("CREATED", "UPDATED")):
+                print(f"      cash         = {base.get('account_for_change_amount')}")
+                print(f"      cost_center  = {base.get('cost_center')}")
+                print(f"      print_format = {base.get('print_format')}")
         except Exception as exc:  # noqa: BLE001
-            summary["ERRORED"] += 1
+            summary["ERRORED"] = summary.get("ERRORED", 0) + 1
             errors.append((outlet["warehouse_name"], str(exc)))
-            print(f"  [ERROR             ] {outlet['warehouse_name']:<35} {exc}")
+            print(f"  [ERROR] {outlet['warehouse_name']}: {exc}")
 
     frappe.db.commit()
     frappe.clear_cache()
 
-    print()
-    print("-" * 72)
+    print("\n" + "-" * 78)
     print(" Summary:")
     for k, v in summary.items():
-        print(f"   {k:<20} {v}")
+        print(f"   {k:<32} {v}")
     if errors:
-        print()
-        print(" Errors (review and re-run if needed):")
+        print("\n Errors:")
         for w, e in errors:
             print(f"   - {w}: {e}")
-    print("=" * 72)
+    print("=" * 78)
     sys.exit(0 if not errors else 2)
 
 
-# bench execute eval-scope fix (same trick as other Phase-5 scripts).
 try:
     _g = globals()
     for _k, _v in list(locals().items()):
