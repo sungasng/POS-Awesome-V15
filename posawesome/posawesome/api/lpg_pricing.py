@@ -407,6 +407,15 @@ def get_tier_rates_bulk(items, customer: str,
         item_code = row.get("item_code")
         if not item_code:
             continue
+        # Sungas Phase-5: only flag a missing tier when this item is a
+        # 'tiered item' (has at least one LPG Outlet Price Tier row).
+        # Non-tiered items (cylinders, regulators, cookers, accessories)
+        # legitimately have no tier and should NOT trigger the
+        # "no tier rate for this customer" toast.
+        is_tiered_item = bool(frappe.db.exists(
+            "LPG Outlet Price Tier",
+            {"item_code": item_code, "enabled": 1},
+        ))
         tier = find_applicable_tier(
             item_code=item_code,
             customer_group=customer_group,
@@ -418,6 +427,7 @@ def get_tier_rates_bulk(items, customer: str,
             rows.append({
                 "item_code": item_code,
                 "qty": flt(row.get("qty") or 0),
+                "is_tiered_item": is_tiered_item,
                 "has_tier": True,
                 "tier_name": tier["name"],
                 "rate": flt(tier["rate"]),
@@ -427,10 +437,14 @@ def get_tier_rates_bulk(items, customer: str,
                 "matched_territory": tier.get("territory"),
             })
         else:
-            all_have_tier = False
+            # Only flag the "all_have_tier=False" alarm when the item is
+            # actually tiered. Non-tiered items don't break the alarm.
+            if is_tiered_item:
+                all_have_tier = False
             rows.append({
                 "item_code": item_code,
                 "qty": flt(row.get("qty") or 0),
+                "is_tiered_item": is_tiered_item,
                 "has_tier": False,
             })
     return {

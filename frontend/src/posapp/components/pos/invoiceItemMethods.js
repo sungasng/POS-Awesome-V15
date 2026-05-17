@@ -4271,10 +4271,17 @@ export default {
 		// onto the items themselves (that change of shape was triggering
 		// a Vue reactivity race -> requestAnimationFrame parameter undefined).
 		this._lpgTierByCode = new Map();
+		this._lpgNonTieredByCode = new Set();
 
 		rows.forEach((row) => {
 			const it = items.find((x) => x.item_code === row.item_code);
 			if (!it) return;
+			// Sungas Phase-5: items with NO tier rows at all get parked
+			// in _lpgNonTieredByCode so the PAY-gate (lpgRowsMissingTier)
+			// can skip them. They don't trigger the strict-mode error.
+			if (row.is_tiered_item === false) {
+				this._lpgNonTieredByCode.add(row.item_code);
+			}
 			if (row.has_tier) {
 				this._lpgTierByCode.set(row.item_code, row);
 				// Use the framework-blessed setter so Vue picks up the
@@ -4296,7 +4303,13 @@ export default {
 					it.posa_amount_due = newAmount;
 				}
 			} else {
-				missing.push(it.item_code);
+				// Sungas Phase-5: only complain about a missing tier when
+				// this item is a "tiered item" (server flag is_tiered_item).
+				// Non-tiered items (cylinders, accessories, etc.) keep
+				// their standard SCL Standard Selling price-list rate.
+				if (row.is_tiered_item) {
+					missing.push(it.item_code);
+				}
 			}
 		});
 
@@ -4316,11 +4329,17 @@ export default {
 	},
 
 	// Helper used by show_payment to check if any row is missing a tier.
+	// Sungas Phase-5: only flags TIERED items missing a tier. Non-tiered
+	// items (cylinders, regulators, cookers, accessories) sit in
+	// _lpgNonTieredByCode and don't block PAY.
 	lpgRowsMissingTier() {
 		const items = this.items || [];
 		if (!items.length) return [];
 		const cache = this._lpgTierByCode || new Map();
-		return items.filter((it) => !cache.has(it.item_code)).map((it) => it.item_code);
+		const nonTiered = this._lpgNonTieredByCode || new Set();
+		return items
+			.filter((it) => !cache.has(it.item_code) && !nonTiered.has(it.item_code))
+			.map((it) => it.item_code);
 	},
 
 	// Get price list for current customer
