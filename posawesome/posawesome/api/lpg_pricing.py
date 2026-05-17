@@ -66,14 +66,18 @@ def find_applicable_tier(
     Return the best-matching tier dict (or None).
 
     Phase-5 Sungas business rule:
-        The `territory` argument should be the OUTLET / POS-Profile territory,
+        The `territory` argument is the OUTLET / POS-Profile territory,
         NOT the customer's registered territory. (Where the cylinder is filled
         determines the price, not where the customer lives.)
 
     Lookup precedence:
-        1. Exact (item_code, customer_group, outlet_territory) match.
-        2. Fall back to (item_code, customer_group) — any territory — to cover
-           customer groups that haven't been priced at every outlet yet.
+        1. Exact (item_code, customer_group, outlet_territory).
+        2. Tier with EMPTY territory (i.e. "any outlet" pricing, only valid
+           if the seeder explicitly leaves territory blank).
+
+    Cross-territory fallback is INTENTIONALLY DISABLED. Pedro selling
+    Bulk gas must not silently price at Ekehuan's Bulk rate; a missing
+    (group, outlet) tier means "no price -> no sale" per user directive.
     """
     if not item_code or not customer_group:
         return None
@@ -110,7 +114,7 @@ def find_applicable_tier(
         "valid_from", "valid_to", "territory",
     ]
 
-    # 1. Tier scoped to the outlet's territory.
+    # 1. Tier scoped to the outlet's territory (the only path Sungas uses).
     if territory:
         scoped = frappe.get_all(
             "LPG Outlet Price Tier",
@@ -126,18 +130,24 @@ def find_applicable_tier(
         if best:
             return best
 
-    # 2. Fall back to customer_group only (any territory). For tiers configured
-    # with an empty territory, OR for outlets that haven't been priced yet.
-    any_terr = frappe.get_all(
+    # 2. Optional "global / any-outlet" tier: only rows with NO territory set.
+    # This is a SAFETY VALVE for SKUs priced uniformly nationwide via a single
+    # row with territory='' / None. Seeded rows from the spreadsheet always
+    # carry a territory, so they cannot match here.
+    global_rows = frappe.get_all(
         "LPG Outlet Price Tier",
         filters={
             "item_code": item_code,
             "customer_group": customer_group,
             "enabled": 1,
         },
+        or_filters=[
+            ["territory", "is", "not set"],
+            ["territory", "=", ""],
+        ],
         fields=fields,
     )
-    return _best(any_terr)
+    return _best(global_rows)
 
 
 def apply_tiered_pricing(doc, method=None):
