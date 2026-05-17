@@ -40,7 +40,109 @@ SKIP_WAREHOUSE_TOKENS = (
 )
 
 OUTLET_CASHIER_MAP: dict[str, list[str]] = {
-    # Fill before running on prod: { "Pedro": ["cashier@sungas.org", ...] }
+    # Phase-5.5: from Cashier-Plant Managers.xlsx (rev 2026-02).
+    # Plant manager AND cashiers are both applicable_for_users so either
+    # can log into the POS Profile. Spelling normalised to match the
+    # warehouse_name keys used by the clone script.
+    "Ikeja": [
+        "ameh.monday@sungas.org",          # plant manager
+        "peace.effiong@sungas.org",
+        "queen.agada@sungas.org",
+        "okewu.queen@sungas.org",
+    ],
+    "Pedro": [
+        "cecilia.mathew@sungas.org",
+        "bolanle.ayodele@sungas.org",
+        "bolajoko.abilawon@sungas.org",
+    ],
+    "Bolade": [
+        "john.udoh@sungas.org",
+        "blessing.akogwu@sungas.org",
+        "rachael.moses@sungas.org",
+    ],
+    "Aseese": [
+        "adewale.adeniyi@sungas.org",
+        "funke.baskare@sungas.org",
+        "blessing.amos@sungas.org",
+    ],
+    "Iju-Otta": [
+        "osi.otta@sungas.org",             # PM email per spreadsheet (sic)
+        "omowunmi.ibiwoye@sungas.org",
+        "abigeal.agbedeyi@sungas.org",
+        "kaosara.kareem@sungas.org",
+    ],
+    "Osi-Otta": [
+        "korede.ayomide@sungas.org",
+        "success.patrick@sungas.org",
+        "funmilayo.akinwalere@sungas.org",
+    ],
+    "Sefu": [
+        "adewale.adeoye@sungas.org",
+        "wura.adedeji@sungas.org",
+        "esther.adewale@sungas.org",
+    ],
+    "Maba": [
+        "olawale.ambali@sungas.org",
+        "kafayat.olaiya@sungas.org",
+        "setemi.adesina@sungas.org",
+    ],
+    "Ijoko": [
+        "gbenga.olamide@sungas.org",
+        "oluwaseyi.olawole@sungas.org",
+        "omolade.mary@sungas.org",
+    ],
+    "Ebutte": [
+        "dayo.olawoyin@sungas.org",
+        "seyifunmi.adekoya@sungas.org",
+        "olawunmi.shonubi@sungas.org",
+    ],
+    "Upper Mission": [
+        "yakubu.hawa@sungas.org",
+        "victoria.micheal@sungas.org",
+        "sarah.pius@sungas.org",
+        "wisdom.ogbevoen@sungas.org",
+        "nimota.sulaimon@sungas.org",
+        "gift.okotogbo@sungas.org",
+    ],
+    "Idokpa": [
+        "macauley.uwagwe@sungas.org",
+        "deborah.oyiza@sungas.org",
+        "ify.chuks@sungas.org",
+    ],
+    "Ekehuan": [
+        "alozie.faith@sungas.org",
+        "shima.justine@sungas.org",
+        "gift.odihi@sungas.org",
+    ],
+    "Okhuoromi": [
+        "victor.obi@sungas.org",
+        "emmanuella.benjamin@sungas.org",
+        "dominion.roland@sungas.org",
+    ],
+    "Idowina": [
+        "oriakhi.rachael@sungas.org",
+        "ayomide.joshua@sungas.org",
+        "ruth.ekhowmanye@sungas.org",
+    ],
+    "Asaba": [
+        "favour.iyare@sungas.org",
+        "endurance.okon@sungas.org",
+        "chikodiri.maduabuchi@sungas.org",
+    ],
+    "Reclamation": [
+        "abigail.solomon@sungas.org",
+        "emmanuel.nnorom@sungas.org",
+        "felicity.agbede@sungas.org",
+        "flourish.akuna@sungas.org",
+    ],
+    "Eleme": [
+        "fidelis.akpan@sungas.org",
+        "c.echeazu@sungas.org",
+        "ilami.akari@sungas.org",
+        "abigail.nanee@sungas.org",
+    ],
+    # Itele, Oworo, Mafoluku: no cashiers in the spreadsheet yet ->
+    # autodiscovery falls back to Administrator only (you can edit later).
 }
 
 USERS_AUTODISCOVERY = True

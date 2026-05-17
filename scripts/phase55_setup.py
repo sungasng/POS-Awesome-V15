@@ -150,6 +150,49 @@ def fix_asaba_typo():
     print(f"  Renamed -> {good!r}")
 
 
+# -------------------------------------------------------------------- 2b. POS Incoming typos
+POS_INCOMING_RENAMES = [
+    ("1540 - 1501 - POS Incoming - Itele - SCL",
+     "1540 - POS Incoming - Itele - SCL",
+     "POS Incoming - Itele", "1540"),
+    ("1524 - POS Incoming - Idowina - idowina - SCL",
+     "1524 - POS Incoming - Idowina - SCL",
+     "POS Incoming - Idowina", "1524"),
+    ("1531 - POS Incoming - Idowina - idokpa - SCL",
+     "1531 - POS Incoming - Idokpa - SCL",
+     "POS Incoming - Idokpa", "1531"),
+    ("1535 - - POS Incoming - Asaba - SCL",
+     "1535 - POS Incoming - Asaba - SCL",
+     "POS Incoming - Asaba", "1535"),
+]
+
+
+def fix_pos_incoming_typos():
+    _hr("2b. Fix POS Incoming account-name typos")
+    fixed = 0
+    for bad, good, account_name, number in POS_INCOMING_RENAMES:
+        if not frappe.db.exists("Account", bad):
+            print(f"  [skip] not present: {bad!r}")
+            continue
+        if frappe.db.exists("Account", good):
+            # Same number can't exist twice; merge in manually.
+            print(f"  [SKIP] both names exist - reconcile manually: {bad!r}")
+            continue
+        try:
+            frappe.rename_doc("Account", bad, good, merge=False, force=True)
+            a = frappe.get_doc("Account", good)
+            a.account_name = account_name
+            a.account_number = number
+            a.save(ignore_permissions=True)
+            fixed += 1
+            print(f"  [OK ] {bad!r}\n         -> {good!r}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"  [ERR] {bad!r}: {exc}")
+    if fixed:
+        frappe.db.commit()
+    print(f"  Summary: {fixed} renamed.")
+
+
 # -------------------------------------------------------------------- 3. Missing accounts
 def _next_account_number(parent_account, prefix_digits):
     rows = frappe.get_all(
@@ -372,6 +415,7 @@ def main():
     print("=" * 76)
     rename_cost_centers()
     fix_asaba_typo()
+    fix_pos_incoming_typos()
     create_missing_accounts()
     create_branches()
     setup_region_doctype()
