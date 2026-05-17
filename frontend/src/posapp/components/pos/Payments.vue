@@ -1143,6 +1143,69 @@ export default {
 		},
 	},
 	watch: {
+		// Sungas Phase-5: bulletproof watcher that re-applies LPG cash overage
+		// whenever invoice_doc.payments mutates. This catches all async resets
+		// (e.g. reload_invoice -> load_invoice -> get_payments) that would
+		// otherwise revert the default cash payment back to subtotal.
+		"invoice_doc.payments": {
+			deep: true,
+			handler() {
+				if (!this.paymentVisible) return;
+				if (!this.invoice_doc || !Array.isArray(this.invoice_doc.payments)) return;
+				const stash = this.invoiceStore?.lpgTypedCash;
+				if (!stash || !stash.size) return;
+
+				// Recompute overage from the Pinia stash + current items so we
+				// know what rounded_total / default cash amount SHOULD be.
+				let totalOverage = 0;
+				for (const row of this.invoice_doc.items || []) {
+					const qty = Number(row.qty) || 0;
+					const rate = Number(row.rate) || 0;
+					const goods = qty * rate;
+					if (rate <= 0) continue;
+					const typed = Number(stash.get(row.item_code)) || 0;
+					if (typed > 0) {
+						const diff = typed - goods;
+						if (diff > 0.01 && diff <= rate) {
+							totalOverage += diff;
+							row.posa_amount_due = typed;
+						}
+					}
+				}
+				totalOverage = Math.round(totalOverage * 100) / 100;
+				if (totalOverage < 0.01) return;
+
+				const grand = Number(this.invoice_doc.grand_total) || 0;
+				const target = Math.round((grand + totalOverage) * 100) / 100;
+				// Sync rounding fields.
+				if (Math.abs((this.invoice_doc.rounding_adjustment || 0) - totalOverage) > 0.01) {
+					this.invoice_doc.rounding_adjustment = totalOverage;
+				}
+				if (Math.abs((this.invoice_doc.rounded_total || 0) - target) > 0.01) {
+					this.invoice_doc.rounded_total = target;
+					if (this.invoice_doc.base_rounded_total !== undefined) {
+						this.invoice_doc.base_rounded_total = target;
+					}
+				}
+
+				const defaultCash = this.invoice_doc.payments.find(
+					(p) => p && p.default === 1 &&
+						String(p.mode_of_payment || "").toLowerCase().includes("cash"),
+				);
+				if (!defaultCash) return;
+				const current = Number(defaultCash.amount) || 0;
+				if (current < target - 0.01) {
+					defaultCash.amount = target;
+					if (defaultCash.base_amount !== undefined) {
+						defaultCash.base_amount = target;
+					}
+					console.log("[LPG-Overage] watcher re-applied", {
+						from: current,
+						to: target,
+					});
+				}
+			},
+		},
 		// Watch diff_payment to update paid_change
 		diff_payment(newVal) {
 			if (this.is_user_editing_paid_change) {
