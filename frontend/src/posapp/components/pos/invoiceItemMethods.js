@@ -2394,7 +2394,15 @@ export default {
 
 		const payments = [];
 		// Use this.subtotal which is already in selected currency and includes all calculations
-		const total_amount = this.subtotal;
+		// Sungas Phase-5: add LPG cash overage so the default cash payment
+		// auto-fills the rounded amount (e.g. \u20a62,000 instead of goods \u20a61,980)
+		// every time get_payments fires -- this matters because background
+		// sync / load_invoice / multiple Payments.vue watchers re-call this
+		// method asynchronously after the PAY dialog is open.
+		const lpgOverage = (this.lpgCashOverage && this.lpgCashOverage > 0.01)
+			? this.lpgCashOverage
+			: 0;
+		const total_amount = this.subtotal + lpgOverage;
 		let remaining_amount = total_amount;
 
 		if (this.loyalty_amount) remaining_amount -= this.loyalty_amount;

@@ -375,6 +375,16 @@ export default {
 			additional_discount: 0,
 			additional_discount_percentage: 0,
 			total_tax: 0,
+			// Sungas Phase-5: persistent stash of cashier-typed cash amounts
+			// keyed by item_code. ItemsTable emits 'lpg_amount_due_changed'
+			// every time the cashier types in the expanded-row Total Amount
+			// field. We keep the latest value here so that:
+			//   1. lpgCashOverage computed can fall back to it after a
+			//      load_invoice round-trip wipes item.posa_amount_due.
+			//   2. handleLoadInvoice can re-stamp posa_amount_due on the
+			//      freshly-loaded items so backend apply_cash_overage still
+			//      sees the correct value on submit.
+			lpgTypedCash: {},
 			packed_dialog_items: [], // Packed items displayed in dialog
 			show_packed_dialog: false, // Packing list dialog visibility
 			posOffers: [], // All available offers
@@ -1453,10 +1463,49 @@ export default {
 		},
 		handleClearInvoice() {
 			this.clear_invoice();
+			this.clearLpgTypedCashStash();
 			this.eventBus.emit("focus_item_search");
 		},
 		handleLoadInvoice(data) {
 			this.load_invoice(data);
+			// Sungas Phase-5: re-stamp cashier-typed posa_amount_due on the
+			// freshly-loaded items so the cart's lpgCashOverage computed
+			// and the backend apply_cash_overage hook still see the right
+			// value after a save/reload round-trip wipes the custom field.
+			this.$nextTick(() => this.restampLpgTypedCash());
+		},
+		// Phase-5 Sungas: track cashier-typed cash by item_code on this
+		// Invoice component instance. The stash survives load_invoice
+		// (which replaces this.items[]) and is the source of truth for
+		// the cart's bottom Total panel after a backend round-trip.
+		handleLpgAmountDueChanged({ item_code, amount } = {}) {
+			if (!item_code) return;
+			const value = Number(amount) || 0;
+			if (value <= 0) {
+				delete this.lpgTypedCash[item_code];
+			} else {
+				this.lpgTypedCash = { ...this.lpgTypedCash, [item_code]: value };
+			}
+			// Immediately restamp in case items[] already has the row.
+			this.restampLpgTypedCash();
+		},
+		clearLpgTypedCashStash() {
+			this.lpgTypedCash = {};
+		},
+		restampLpgTypedCash() {
+			const stash = this.lpgTypedCash || {};
+			if (!Object.keys(stash).length || !Array.isArray(this.items)) return;
+			this.items.forEach((item) => {
+				const typed = Number(stash[item.item_code]) || 0;
+				if (typed <= 0) return;
+				const qty = Number(item.qty) || 0;
+				const rate = Number(item.rate) || 0;
+				const goodsValue = qty * rate;
+				// Only restamp when typed is a valid same-row overage.
+				if (typed > goodsValue && typed <= goodsValue + rate) {
+					item.posa_amount_due = typed;
+				}
+			});
 		},
 		handleLoadOrder(data) {
 			this.new_order(data);
@@ -1552,6 +1601,8 @@ export default {
 			reset_posting_date: this.handleResetPostingDate,
 			calc_uom: this.calc_uom,
 			show_payment: this.handleShowPayment,
+			lpg_amount_due_changed: this.handleLpgAmountDueChanged,
+			clear_invoice_lpg_stash: this.clearLpgTypedCashStash,
 		};
 
 		Object.entries(this._busHandlers).forEach(([eventName, handler]) => {

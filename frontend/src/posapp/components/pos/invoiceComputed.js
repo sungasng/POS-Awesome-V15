@@ -107,14 +107,20 @@ export default {
 	// For each row where posa_amount_due > qty*rate (and the gap fits
 	// within one rate-unit, so it's a same-row rounding), sum the diff.
 	// Used by the bottom Total panel to show ₦1,980 goods + ₦20 round-off
-	// = ₦2,000 (what the customer actually hands over).
+	// = ₦2,000 (what the customer actually hands over). Falls back to
+	// this.lpgTypedCash stash because backend save/reload round-trips drop
+	// the custom posa_amount_due field from invoice_doc.items.
 	lpgCashOverage() {
 		const items = this.items || [];
+		const stash = this.lpgTypedCash || {};
 		let total = 0;
 		for (const item of items) {
 			const qty = Number(item.qty) || 0;
 			const rate = Number(item.rate) || 0;
-			const amountDue = Number(item.posa_amount_due) || 0;
+			let amountDue = Number(item.posa_amount_due) || 0;
+			if (!amountDue) {
+				amountDue = Number(stash[item.item_code]) || 0;
+			}
 			if (rate <= 0 || amountDue <= 0) continue;
 			const goodsValue = qty * rate;
 			const diff = amountDue - goodsValue;
