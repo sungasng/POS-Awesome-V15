@@ -148,24 +148,61 @@ RETAIL_CUSTOMER_GROUP = "Retail"
 # ------------------------------------------------------------------ #
 def clear_stale_role_profile_locks() -> int:
     """The Role Profile `on_update` hook calls `queue_action()` which
-    inserts a row in `tabDocument Lock`. That insert auto-commits, so if
-    a later step in the same script crashes and the surrounding
-    transaction is rolled back, the Role Profile row disappears but the
-    lock row stays -- bricking the next run.
+    creates a filesystem lock (`sites/<site>/locks/Role Profile_*.lock`)
+    in Frappe v15 -- and in some builds a `tabDocument Lock` row. Either
+    can outlive a rolled-back transaction and brick the next run.
 
-    Wipe any stale lock targeting one of our four LPG Role Profiles."""
+    Wipe both forms for any of our four LPG Role Profiles."""
+    import os
+    import glob
+
     profile_names = list(ROLE_PROFILES.keys())
-    if not frappe.db.table_exists("Document Lock"):
-        return 0  # older Frappe used filesystem locks; nothing to clear
-    placeholders = ", ".join(["%s"] * len(profile_names))
-    count = frappe.db.sql(
-        f"""DELETE FROM `tabDocument Lock`
-            WHERE document_type = 'Role Profile'
-              AND document_name IN ({placeholders})""",
-        tuple(profile_names),
-    )
-    frappe.db.commit()
-    return int(count or 0)
+    cleared = 0
+
+    # --- 1. Filesystem locks (v15 default) ---
+    try:
+        locks_dir = frappe.get_site_path("locks")
+        if os.path.isdir(locks_dir):
+            # Lock filename pattern: "<DocType>_<name>.lock"
+            for profile in profile_names:
+                # Try exact match plus generic "Role Profile_*" glob to catch
+                # any name-sanitization variants.
+                candidates = [
+                    os.path.join(locks_dir, f"Role Profile_{profile}.lock"),
+                    os.path.join(locks_dir, f"role_profile_{profile}.lock"),
+                ]
+                for path in candidates:
+                    if os.path.exists(path):
+                        os.remove(path)
+                        cleared += 1
+                        print(f"  removed lock file: {os.path.basename(path)}")
+            # Catch any leftover Role Profile lock files (e.g. weird casing).
+            for path in glob.glob(os.path.join(locks_dir, "Role Profile_*.lock")):
+                try:
+                    os.remove(path)
+                    cleared += 1
+                    print(f"  removed stray lock: {os.path.basename(path)}")
+                except FileNotFoundError:
+                    pass
+    except Exception as exc:
+        print(f"  WARN filesystem-lock cleanup failed: {exc}")
+
+    # --- 2. DB locks (newer Frappe builds) ---
+    try:
+        if frappe.db.table_exists("Document Lock"):
+            placeholders = ", ".join(["%s"] * len(profile_names))
+            rows = frappe.db.sql(
+                f"""DELETE FROM `tabDocument Lock`
+                    WHERE document_type = 'Role Profile'
+                      AND document_name IN ({placeholders})""",
+                tuple(profile_names),
+            )
+            cleared += int(rows or 0)
+            frappe.db.commit()
+    except Exception as exc:
+        print(f"  WARN DB-lock cleanup failed: {exc}")
+
+    return cleared
 
 
 def _ensure_role(role_name: str) -> bool:
@@ -273,9 +310,9 @@ def main():
     print("=" * 78)
 
     # ---- 4a.  Clear stale Document Locks from any aborted prior run ----
+    print("\n[0] Clearing stale Role Profile locks (if any)...")
     n_locks = clear_stale_role_profile_locks()
-    if n_locks:
-        print(f"\n[0] Cleared {n_locks} stale Document Lock(s) on LPG Role Profiles.")
+    print(f"      cleared {n_locks} lock(s).")
 
     # ---- 4b. Ensure Role Profiles ----
     print("\n[1] Ensure Role Profiles exist with the right bundles:")
