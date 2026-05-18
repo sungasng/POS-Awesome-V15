@@ -146,6 +146,28 @@ RETAIL_CUSTOMER_GROUP = "Retail"
 # ------------------------------------------------------------------ #
 # 3.  Helpers
 # ------------------------------------------------------------------ #
+def clear_stale_role_profile_locks() -> int:
+    """The Role Profile `on_update` hook calls `queue_action()` which
+    inserts a row in `tabDocument Lock`. That insert auto-commits, so if
+    a later step in the same script crashes and the surrounding
+    transaction is rolled back, the Role Profile row disappears but the
+    lock row stays -- bricking the next run.
+
+    Wipe any stale lock targeting one of our four LPG Role Profiles."""
+    profile_names = list(ROLE_PROFILES.keys())
+    if not frappe.db.table_exists("Document Lock"):
+        return 0  # older Frappe used filesystem locks; nothing to clear
+    placeholders = ", ".join(["%s"] * len(profile_names))
+    count = frappe.db.sql(
+        f"""DELETE FROM `tabDocument Lock`
+            WHERE document_type = 'Role Profile'
+              AND document_name IN ({placeholders})""",
+        tuple(profile_names),
+    )
+    frappe.db.commit()
+    return int(count or 0)
+
+
 def _ensure_role(role_name: str) -> bool:
     """Roles like Sales User / Accounts User must already exist in ERPNext;
     only return True if they really do (do NOT auto-create stock roles)."""
@@ -173,6 +195,7 @@ def ensure_role_profile(profile_name: str, role_names: list[str]) -> None:
         for r in valid_roles:
             doc.append("roles", {"role": r})
         doc.save(ignore_permissions=True)
+        frappe.db.commit()  # persist immediately
         print(f"  [upd ] Role Profile {profile_name!r} now bundles: {', '.join(sorted(target))}")
         return
 
@@ -182,6 +205,7 @@ def ensure_role_profile(profile_name: str, role_names: list[str]) -> None:
         "roles": [{"role": r} for r in valid_roles],
     })
     doc.insert(ignore_permissions=True)
+    frappe.db.commit()  # persist immediately so a later error can't roll it back
     print(f"  [new ] Role Profile {profile_name!r} created with: {', '.join(sorted(valid_roles))}")
 
 
@@ -248,7 +272,12 @@ def main():
     print(" Phase 5.5 -- LPG Role Profiles + cashier/manager assignment")
     print("=" * 78)
 
-    # ---- 4a. Ensure Role Profiles ----
+    # ---- 4a.  Clear stale Document Locks from any aborted prior run ----
+    n_locks = clear_stale_role_profile_locks()
+    if n_locks:
+        print(f"\n[0] Cleared {n_locks} stale Document Lock(s) on LPG Role Profiles.")
+
+    # ---- 4b. Ensure Role Profiles ----
     print("\n[1] Ensure Role Profiles exist with the right bundles:")
     for profile, roles in ROLE_PROFILES.items():
         ensure_role_profile(profile, roles)
