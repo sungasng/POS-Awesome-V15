@@ -41,6 +41,7 @@ PROMO_LINE = "GAS DELIVERY NOW AVAILABLE IN PARTNERSHIP WITH VERVEFLAME -- 09055
 
 
 CSS = r"""
+@import url('https://fonts.googleapis.com/css2?family=Libre+Barcode+128&display=swap');
 @page { size: 58mm auto; margin: 0; }
 body, .print-format { width: 58mm; margin: 0 auto; padding: 2mm; }
 body, .print-format, .print-format * {
@@ -60,7 +61,12 @@ td, th { padding: 0; vertical-align: top; }
 .brand { font-size: 13px !important; font-weight: bold; letter-spacing: 0.5px; }
 .muted { color: #444 !important; }
 .barcode { margin: 2mm 0 1mm; text-align: center; }
-.barcode svg { max-width: 50mm; height: 14mm; }
+.barcode-line {
+    font-family: 'Libre Barcode 128', 'Code 128', monospace;
+    font-size: 34px !important;
+    line-height: 1 !important;
+    letter-spacing: 0;
+}
 .terms { font-size: 9px !important; }
 .terms ul { padding-left: 4mm; margin: 1mm 0; }
 .terms li { margin: 0; padding: 0; }
@@ -155,7 +161,7 @@ HTML = r"""
 <div class="hr"></div>
 
 <div class="barcode">
-    {% if frappe.utils.get_barcode_svg is defined %}{{ frappe.utils.get_barcode_svg(barcode_payload) }}{% endif %}
+    <div class="barcode-line">*{{ barcode_payload }}*</div>
     <div class="muted">{{ barcode_payload }}</div>
 </div>
 <div class="hr"></div>
