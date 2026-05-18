@@ -309,17 +309,18 @@ def main():
     print(" Phase 5.5 -- LPG Role Profiles + cashier/manager assignment")
     print("=" * 78)
 
-    # ---- 4a. Defang the queue lock guard.
-    # Frappe Cloud's v15 build calls Document.check_if_locked() inside
-    # queue_action() BEFORE checking frappe.flags.in_migrate, so the
-    # usual maintenance-mode bypass doesn't apply. The lock is
-    # filesystem-based with sha224-hashed filenames that we can't
-    # reliably target from outside. Cleanest workaround: monkey-patch
-    # check_if_locked to a no-op for the duration of this setup script,
-    # then restore it.
+    # ---- 4a. Defang the queue lock guards.
+    # Frappe Cloud's v15 build's queue_action() runs BOTH check_if_locked()
+    # AND self.lock() before the in_migrate short-circuit, so we need to
+    # neuter both. Locks are filesystem-based with sha224-hashed names we
+    # can't target reliably from outside. Cleanest workaround: monkey-patch
+    # both methods to no-ops for the duration of this setup script, then
+    # restore them in a finally block.
     from frappe.model.document import Document
     _orig_check_if_locked = Document.check_if_locked
+    _orig_lock = Document.lock
     Document.check_if_locked = lambda self: None
+    Document.lock = lambda self, timeout=None: None
     frappe.flags.in_migrate = True
     print("\n[0] Lock guard disabled for this setup pass.")
 
@@ -385,8 +386,9 @@ def main():
         print("redeploy). User Permission already restricts visibility to the")
         print("Retail group and forces new customers into Retail.")
     finally:
-        # Always restore the original lock guard, even if the body errors.
+        # Always restore the original lock guards, even if the body errors.
         Document.check_if_locked = _orig_check_if_locked
+        Document.lock = _orig_lock
 
 
 # Allow `bench execute "exec(open('...').read())"` to locate the functions.
