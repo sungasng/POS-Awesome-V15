@@ -309,10 +309,17 @@ def main():
     print(" Phase 5.5 -- LPG Role Profiles + cashier/manager assignment")
     print("=" * 78)
 
-    # ---- 4a.  Clear stale Document Locks from any aborted prior run ----
-    print("\n[0] Clearing stale Role Profile locks (if any)...")
+    # ---- 4a. Tell Frappe we are in a maintenance run so Role Profile's
+    #        on_update hook runs synchronously and skips the queue-lock
+    #        guard. Without this, queue_action() raises DocumentLockedError
+    #        whenever there's a stale lock from a previously aborted run.
+    frappe.flags.in_migrate = True
+    print("\n[0] frappe.flags.in_migrate = True (bypass queue lock).")
+
+    # Best-effort cleanup of any stale lock files we *do* recognise.
     n_locks = clear_stale_role_profile_locks()
-    print(f"      cleared {n_locks} lock(s).")
+    if n_locks:
+        print(f"      also cleared {n_locks} explicit lock file(s).")
 
     # ---- 4b. Ensure Role Profiles ----
     print("\n[1] Ensure Role Profiles exist with the right bundles:")
