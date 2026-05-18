@@ -34,9 +34,10 @@ import frappe
 # 1.  Role Profile definitions
 # ------------------------------------------------------------------ #
 # Roles common to every profile (needed to use POS Awesome at all).
+# Note: POS Awesome does NOT require the built-in 'POS User' role -- it
+# creates Sales Invoices through the Sales User permission set.
 POS_BASE_ROLES = [
     "Sales User",
-    "POS User",
     "Stock User",
     "Accounts User",
 ]
@@ -185,20 +186,26 @@ def ensure_role_profile(profile_name: str, role_names: list[str]) -> None:
 
 
 def assign_role_profile(email: str, profile: str) -> tuple[str, str]:
-    """Returns (status, detail). status in {OK, NOOP, MISSING_USER}."""
+    """Returns (status, detail). status in {OK, NOOP, MISSING_USER}.
+
+    Uses the legacy `role_profile_name` field only -- Frappe's User
+    validate hook reads that field and overwrites `user.roles` with the
+    profile's role set, so we don't need to touch `user.roles` directly.
+    """
     if not frappe.db.exists("User", email):
         return "MISSING_USER", "user does not exist"
 
     user = frappe.get_doc("User", email)
     current = (user.role_profile_name or "").strip()
-    child_profiles = {row.role_profile for row in (user.get("role_profiles") or [])}
 
-    if current == profile and child_profiles == {profile}:
+    if current == profile:
         return "NOOP", f"already on {profile!r}"
 
     user.role_profile_name = profile
-    user.set("role_profiles", [])
-    user.append("role_profiles", {"role_profile": profile})
+    # Explicitly clear existing roles so save() re-populates them from the
+    # profile (safer than relying on Frappe's append-vs-replace semantics,
+    # which differ across Frappe minor versions).
+    user.set("roles", [])
     user.save(ignore_permissions=True)
     return "OK", f"{current or '<none>'} -> {profile}"
 
