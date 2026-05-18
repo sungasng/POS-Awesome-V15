@@ -309,73 +309,84 @@ def main():
     print(" Phase 5.5 -- LPG Role Profiles + cashier/manager assignment")
     print("=" * 78)
 
-    # ---- 4a. Tell Frappe we are in a maintenance run so Role Profile's
-    #        on_update hook runs synchronously and skips the queue-lock
-    #        guard. Without this, queue_action() raises DocumentLockedError
-    #        whenever there's a stale lock from a previously aborted run.
+    # ---- 4a. Defang the queue lock guard.
+    # Frappe Cloud's v15 build calls Document.check_if_locked() inside
+    # queue_action() BEFORE checking frappe.flags.in_migrate, so the
+    # usual maintenance-mode bypass doesn't apply. The lock is
+    # filesystem-based with sha224-hashed filenames that we can't
+    # reliably target from outside. Cleanest workaround: monkey-patch
+    # check_if_locked to a no-op for the duration of this setup script,
+    # then restore it.
+    from frappe.model.document import Document
+    _orig_check_if_locked = Document.check_if_locked
+    Document.check_if_locked = lambda self: None
     frappe.flags.in_migrate = True
-    print("\n[0] frappe.flags.in_migrate = True (bypass queue lock).")
+    print("\n[0] Lock guard disabled for this setup pass.")
 
-    # Best-effort cleanup of any stale lock files we *do* recognise.
-    n_locks = clear_stale_role_profile_locks()
-    if n_locks:
-        print(f"      also cleared {n_locks} explicit lock file(s).")
+    try:
+        # Best-effort cleanup of any stale lock files we recognise.
+        n_locks = clear_stale_role_profile_locks()
+        if n_locks:
+            print(f"      cleared {n_locks} explicit lock file(s).")
 
-    # ---- 4b. Ensure Role Profiles ----
-    print("\n[1] Ensure Role Profiles exist with the right bundles:")
-    for profile, roles in ROLE_PROFILES.items():
-        ensure_role_profile(profile, roles)
+        # ---- 4b. Ensure Role Profiles ----
+        print("\n[1] Ensure Role Profiles exist with the right bundles:")
+        for profile, roles in ROLE_PROFILES.items():
+            ensure_role_profile(profile, roles)
 
-    # ---- 4b. Assign profiles ----
-    summary = {"updated": 0, "noop": 0, "missing": 0}
+        # ---- 4c. Assign profiles ----
+        summary = {"updated": 0, "noop": 0, "missing": 0}
 
-    def _assign(group: set[str], profile: str, label: str) -> None:
-        print(f"\n--- {label} -> {profile!r} ---")
-        for email in sorted(group):
-            status, detail = assign_role_profile(email, profile)
-            if status == "MISSING_USER":
-                summary["missing"] += 1
-                print(f"  [MISS] {email}")
+        def _assign(group: set[str], profile: str, label: str) -> None:
+            print(f"\n--- {label} -> {profile!r} ---")
+            for email in sorted(group):
+                status, detail = assign_role_profile(email, profile)
+                if status == "MISSING_USER":
+                    summary["missing"] += 1
+                    print(f"  [MISS] {email}")
+                    continue
+                if status == "OK":
+                    summary["updated"] += 1
+                    print(f"  [OK  ] {email:<40} {detail}")
+                else:
+                    summary["noop"] += 1
+                    print(f"  [skip] {email:<40} {detail}")
+
+        _assign(PLANT_MANAGERS, "LPG Plant Manager", "Plant Managers")
+        _assign(CASHIERS,       "LPG POS User",      "Cashiers")
+
+        # ---- 4d. Cashier-only User Permission: Customer Group = Retail ----
+        print(f"\n[3] Lock cashiers to Customer Group = {RETAIL_CUSTOMER_GROUP!r}:")
+        cust_summary = {"added": 0, "skip": 0, "missing-group": 0, "missing-user": 0}
+        for email in sorted(CASHIERS):
+            if not frappe.db.exists("User", email):
+                cust_summary["missing-user"] += 1
                 continue
-            if status == "OK":
-                summary["updated"] += 1
-                print(f"  [OK  ] {email:<40} {detail}")
-            else:
-                summary["noop"] += 1
-                print(f"  [skip] {email:<40} {detail}")
+            status = ensure_retail_customer_group_perm(email)
+            cust_summary[status] = cust_summary.get(status, 0) + 1
+            if status == "added":
+                print(f"  [+   ] {email:<40} -> Customer Group = {RETAIL_CUSTOMER_GROUP}")
+        print(
+            f"  Cashier User Permissions: added={cust_summary['added']}, "
+            f"already-set={cust_summary['skip']}, missing-group={cust_summary['missing-group']}, "
+            f"missing-user={cust_summary['missing-user']}"
+        )
 
-    _assign(PLANT_MANAGERS, "LPG Plant Manager", "Plant Managers")
-    _assign(CASHIERS,       "LPG POS User",      "Cashiers")
+        frappe.db.commit()
 
-    # ---- 4c. Cashier-only User Permission: Customer Group = Retail ----
-    print(f"\n[3] Lock cashiers to Customer Group = {RETAIL_CUSTOMER_GROUP!r}:")
-    cust_summary = {"added": 0, "skip": 0, "missing-group": 0, "missing-user": 0}
-    for email in sorted(CASHIERS):
-        if not frappe.db.exists("User", email):
-            cust_summary["missing-user"] += 1
-            continue
-        status = ensure_retail_customer_group_perm(email)
-        cust_summary[status] = cust_summary.get(status, 0) + 1
-        if status == "added":
-            print(f"  [+   ] {email:<40} -> Customer Group = {RETAIL_CUSTOMER_GROUP}")
-    print(
-        f"  Cashier User Permissions: added={cust_summary['added']}, "
-        f"already-set={cust_summary['skip']}, missing-group={cust_summary['missing-group']}, "
-        f"missing-user={cust_summary['missing-user']}"
-    )
-
-    frappe.db.commit()
-
-    print("\n" + "=" * 78)
-    print(
-        f" SUMMARY: profile-assignments updated={summary['updated']}, "
-        f"already-correct={summary['noop']}, missing-user={summary['missing']}"
-    )
-    print("=" * 78)
-    print("\nNote: To strictly block cashiers from EDITING existing Customer")
-    print("records, a small before_save hook is required (app code change +")
-    print("redeploy). User Permission already restricts visibility to the")
-    print("Retail group and forces new customers into Retail.")
+        print("\n" + "=" * 78)
+        print(
+            f" SUMMARY: profile-assignments updated={summary['updated']}, "
+            f"already-correct={summary['noop']}, missing-user={summary['missing']}"
+        )
+        print("=" * 78)
+        print("\nNote: To strictly block cashiers from EDITING existing Customer")
+        print("records, a small before_save hook is required (app code change +")
+        print("redeploy). User Permission already restricts visibility to the")
+        print("Retail group and forces new customers into Retail.")
+    finally:
+        # Always restore the original lock guard, even if the body errors.
+        Document.check_if_locked = _orig_check_if_locked
 
 
 # Allow `bench execute "exec(open('...').read())"` to locate the functions.
