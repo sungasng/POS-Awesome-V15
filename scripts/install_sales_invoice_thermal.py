@@ -207,21 +207,15 @@ HTML = r"""
 """
 
 
-def _upsert_print_format(doctype: str) -> str:
-    """Create or refresh `Sungas Thermal 58mm` for the given doctype.
-    The Print Format name is shared across doctypes via the unique
-    constraint on (name, doc_type); we use one PF per doctype keyed by
-    the same display name to keep the cashier UX consistent."""
-    # Frappe lets two Print Format records share the same `name` only if
-    # they target different doctypes. We disambiguate by querying with
-    # both filters.
-    existing = frappe.db.get_value(
-        "Print Format",
-        {"name": PRINT_FORMAT_NAME, "doc_type": doctype},
-        "name",
-    )
-    if existing:
-        pf = frappe.get_doc("Print Format", existing)
+def _upsert_print_format_for_sales_invoice() -> str:
+    """Move (or create) the `Sungas Thermal 58mm` Print Format so it
+    targets Sales Invoice. Print Format names are globally unique, so
+    we MUST NOT create a second record with the same name -- we just
+    flip the doc_type of the existing one if needed."""
+    if frappe.db.exists("Print Format", PRINT_FORMAT_NAME):
+        pf = frappe.get_doc("Print Format", PRINT_FORMAT_NAME)
+        was = pf.doc_type
+        pf.doc_type = SALES_INVOICE
         pf.html = HTML
         pf.css = CSS
         pf.font_size = 8
@@ -232,12 +226,14 @@ def _upsert_print_format(doctype: str) -> str:
         pf.standard = "No"
         pf.module = "POSAwesome"
         pf.save(ignore_permissions=True)
-        return "UPDATED"
+        if was != SALES_INVOICE:
+            return f"MOVED from {was!r} to {SALES_INVOICE!r}"
+        return "UPDATED (already on Sales Invoice)"
 
     pf = frappe.get_doc({
         "doctype": "Print Format",
         "name": PRINT_FORMAT_NAME,
-        "doc_type": doctype,
+        "doc_type": SALES_INVOICE,
         "module": "POSAwesome",
         "print_format_type": "Jinja",
         "standard": "No",
@@ -249,7 +245,7 @@ def _upsert_print_format(doctype: str) -> str:
         "css": CSS,
     })
     pf.insert(ignore_permissions=True)
-    return "CREATED"
+    return "CREATED on Sales Invoice"
 
 
 def _set_default_print_format_for_sales_invoice():
@@ -311,24 +307,21 @@ def main():
     print(" Install Sungas Thermal 58mm for Sales Invoice + wire defaults")
     print("=" * 78)
 
-    print(f"\n[1] Print Format on POS Invoice : ", end="")
-    print(_upsert_print_format("POS Invoice"))
+    print("\n[1] Print Format -> Sales Invoice : ", end="")
+    print(_upsert_print_format_for_sales_invoice())
 
-    print(f"[2] Print Format on Sales Invoice: ", end="")
-    print(_upsert_print_format("Sales Invoice"))
-
-    print(f"[3] Sales Invoice default_print_format : ", end="")
+    print("[2] Sales Invoice default_print_format : ", end="")
     print(_set_default_print_format_for_sales_invoice())
 
-    print(f"[4] Print Settings.with_letterhead = 0 : ", end="")
+    print("[3] Print Settings.with_letterhead = 0 : ", end="")
     print("APPLIED" if _disable_letterhead_globally() else "already 0")
 
     total, changed = _wire_pos_profile_print_formats()
-    print(f"[5] POS Profile.print_format updated   : {changed} of {total}")
+    print(f"[4] POS Profile.print_format updated   : {changed} of {total}")
 
     frappe.db.commit()
-    print("\nDone. Cashiers can now print a clean 58mm receipt from either")
-    print("the POS Awesome dialog OR the Sales Invoice 'Print' button.")
+    print("\nDone. Sales Invoices created from POS Awesome will print")
+    print("the lean 58mm receipt by default.")
 
 
 try:
