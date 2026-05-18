@@ -40,7 +40,6 @@ PROMO_LINE = "GAS DELIVERY NOW AVAILABLE IN PARTNERSHIP WITH VERVEFLAME -- 09055
 OUTLET_DIRECTORY = {
     "ikeja":           ("9 (old no 1) Obasa Road, Off Oba Akran Avenue, Ikeja, Lagos.",                                "08077683893, 08108815444, 09055493507, 09055493508"),
     "pedro":           ("38/40 Salami Shuaibu Street, Pedro, Somolu, Lagos.",                                          "08077677436, 09055493507, 09055493508"),
-    "bolade":          ("38/40 Salami Shuaibu Street, Pedro, Somolu, Lagos.",                                          "08077677436, 09055493507, 09055493508"),
     "aseese":          ("Km 32, Lagos-Ibadan Expressway, Aseese Bus-Stop, Ogun State.",                                "08108815444, 09055493507, 09055493508"),
     "ijuotta":         ("Kilometre 14, Idiroko Road, Iju Town, Custom Bus-Stop, Ogun State.",                          "08108815444, 09055493507, 09055493508"),
     "osiotta":         ("Ikola Road, 10-10 Bus-Stop, Osi-Ota, Ogun State.",                                            "08108815444, 09055493507, 09055493508"),
@@ -58,8 +57,9 @@ OUTLET_DIRECTORY = {
     "eleme":           ("Km 15, PH-Eleme-Bori Road, Eleme, Rivers State.",                                             "08059044977, 09055493507, 09055493508"),
     "itele":           ("52B Adeleye Street, by Shogbade Filling Station, Lafenwa Road, Ayetoro-Itele, Ogun State.",   "09022186682, 09055493507, 09055493508"),
     "bulksalesbenin":  ("159 Upper Mission Road, Benin City, Edo State.",                                              "08077683770, 07066691434, 09055493507, 09055493508"),
-    "mafoluku":        ("9 (old no 1) Obasa Road, Off Oba Akran Avenue, Ikeja, Lagos.",                                "08077683893, 08108815444, 09055493507, 09055493508"),
-    "oworo":           ("9 (old no 1) Obasa Road, Off Oba Akran Avenue, Ikeja, Lagos.",                                "08077683893, 08108815444, 09055493507, 09055493508"),
+    "bolade":          ("11 Oyetayo Street, Mafoluku, Oshodi, Lagos.",                                                 "08077683893, 08108815444, 09055493507, 09055493508"),
+    "mafoluku":        ("161 Oshodi Road, Mafoluku, Oshodi, Lagos.",                                                   "08077683893, 08108815444, 09055493507, 09055493508"),
+    "oworo":           ("2 Adeniji Street, Oworonshoki, Kosofe, Lagos.",                                               "08077683893, 08108815444, 09055493507, 09055493508"),
 }
 
 # Fallback shown when the outlet name in the POS Profile cannot be
@@ -320,11 +320,26 @@ def _set_default_print_format() -> str:
 
 
 def _wire_pos_profiles() -> tuple[int, int]:
+    """Set BOTH the standard `print_format` and POS Awesome's custom
+    `print_format_for_online` field on every active POS Profile, so
+    every print path (the POS Awesome payment dialog AND the Frappe
+    doc detail-page Print button) lands on our 58mm template."""
     profiles = frappe.get_all("POS Profile", filters={"disabled": 0}, fields=["name"])
     updated = 0
     for p in profiles:
+        changed = False
         if frappe.db.get_value("POS Profile", p.name, "print_format") != PRINT_FORMAT_NAME:
             frappe.db.set_value("POS Profile", p.name, "print_format", PRINT_FORMAT_NAME)
+            changed = True
+        # POS Awesome custom field -- not every install has it; only
+        # update if the field exists on the doctype.
+        meta = frappe.get_meta("POS Profile")
+        if meta.get_field("print_format_for_online"):
+            current = frappe.db.get_value("POS Profile", p.name, "print_format_for_online")
+            if current != PRINT_FORMAT_NAME:
+                frappe.db.set_value("POS Profile", p.name, "print_format_for_online", PRINT_FORMAT_NAME)
+                changed = True
+        if changed:
             updated += 1
     return updated, len(profiles)
 
