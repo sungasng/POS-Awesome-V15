@@ -20,9 +20,12 @@ RETAIL_GROUP = "Retail"
 
 
 SERVER_SCRIPT_INSERT = (
+    "# safe_exec does not expose frappe.get_roles; read Has Role child table instead.\n"
     "SENIORS = {'System Manager', 'Sales Manager', 'Accounts Manager', "
     "'LPG Plant Manager', 'LPG Head of Sales', 'LPG Head of Finance'}\n"
-    "user_roles = set(frappe.get_roles(frappe.session.user))\n"
+    "user_roles = {r.role for r in frappe.db.get_all('Has Role', "
+    "filters={'parent': frappe.session.user, 'parenttype': 'User'}, "
+    "fields=['role'])}\n"
     "if 'LPG POS User' in user_roles and not (user_roles & SENIORS):\n"
     "    doc.customer_group = 'Retail'\n"
 )
@@ -31,7 +34,9 @@ SERVER_SCRIPT_UPDATE = (
     "if not doc.is_new():\n"
     "    SENIORS = {'System Manager', 'Sales Manager', 'Accounts Manager', "
     "'LPG Plant Manager', 'LPG Head of Sales', 'LPG Head of Finance'}\n"
-    "    user_roles = set(frappe.get_roles(frappe.session.user))\n"
+    "    user_roles = {r.role for r in frappe.db.get_all('Has Role', "
+    "filters={'parent': frappe.session.user, 'parenttype': 'User'}, "
+    "fields=['role'])}\n"
     "    if 'LPG POS User' in user_roles and not (user_roles & SENIORS):\n"
     "        frappe.throw('Cashiers cannot edit existing customer profiles.')\n"
 )
