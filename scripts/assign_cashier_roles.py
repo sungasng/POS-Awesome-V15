@@ -1,18 +1,22 @@
 """
-Phase-5.5: assign Role Profiles to every Plant Manager and Cashier listed
-in the OUTLET_CASHIER_MAP, so they can create/submit POS Invoices.
+Phase-5.5: build LPG Role Profiles and assign them to plant managers and
+cashiers, so they can actually use POS Awesome.
 
-Role Profile mapping (Role Profiles already exist in the site):
-  - Cashiers       -> "LPG POS User"
-  - Plant Managers -> "LPG Plant Manager"
+Background
+----------
+The LPG price-change workflow only installs four ROLES
+(LPG POS User, LPG Plant Manager, LPG Head of Sales, LPG Head of Finance).
+Those roles alone do not let a user create a POS Sales Invoice -- the
+user still needs the regular ERPNext POS roles (Sales User, POS User,
+Stock User, Accounts User).
 
-LPG Head of Sales / LPG Head of Finance assignments are handled
-separately (already configured on the site).
+This script wraps each LPG role in a proper Role Profile that bundles
+the required ERPNext roles, then assigns the right profile to each
+plant manager / cashier from the outlet roster.
 
-Behaviour:
-  - Overwrites any existing Role Profile on each user (clean slate).
-  - Sets both the legacy `role_profile_name` and the v15 `role_profiles`
-    child table so Frappe re-syncs the user's roles from the profile.
+Cashiers additionally get a User Permission restricting Customer Group
+to "Retail" -- so any new Customer they create from POS lands in the
+Retail group, and Wholesale customers are hidden from them.
 
 Run on bench:
     curl -fsSL https://raw.githubusercontent.com/sungasng/POS-Awesome-V15/feat/sungas-customizations/scripts/assign_cashier_roles.py \
@@ -26,10 +30,54 @@ from __future__ import annotations
 import frappe
 
 
-CASHIER_PROFILE = "LPG POS User"
-MANAGER_PROFILE = "LPG Plant Manager"
+# ------------------------------------------------------------------ #
+# 1.  Role Profile definitions
+# ------------------------------------------------------------------ #
+# Roles common to every profile (needed to use POS Awesome at all).
+POS_BASE_ROLES = [
+    "Sales User",
+    "POS User",
+    "Stock User",
+    "Accounts User",
+]
 
-# Plant managers (first email per outlet in the spreadsheet).
+ROLE_PROFILES = {
+    # Cashiers -- can sell, create Retail customers, hit the LPG workflow.
+    "LPG POS User": POS_BASE_ROLES + [
+        "LPG POS User",
+    ],
+
+    # Plant Managers -- everything cashiers do + approve LPG price changes
+    # at their outlet. NO cross-branch visibility (no Sales Manager).
+    "LPG Plant Manager": POS_BASE_ROLES + [
+        "LPG POS User",
+        "LPG Plant Manager",
+    ],
+
+    # Head of Sales -- approves LPG price changes at chain level; needs
+    # cross-branch sales visibility.
+    "LPG Head of Sales": POS_BASE_ROLES + [
+        "LPG POS User",
+        "LPG Plant Manager",
+        "LPG Head of Sales",
+        "Sales Manager",
+    ],
+
+    # Head of Finance -- final-stage LPG price approval; cross-branch
+    # accounting visibility.
+    "LPG Head of Finance": POS_BASE_ROLES + [
+        "LPG POS User",
+        "LPG Plant Manager",
+        "LPG Head of Sales",
+        "LPG Head of Finance",
+        "Accounts Manager",
+    ],
+}
+
+
+# ------------------------------------------------------------------ #
+# 2.  Users to assign
+# ------------------------------------------------------------------ #
 PLANT_MANAGERS = {
     "ameh.monday@sungas.org",       # Ikeja
     "cecilia.mathew@sungas.org",    # Pedro
@@ -51,7 +99,6 @@ PLANT_MANAGERS = {
     "fidelis.akpan@sungas.org",     # Eleme
 }
 
-# Cashiers (everyone else in the outlet roster).
 CASHIERS = {
     # Ikeja
     "peace.effiong@sungas.org", "queen.agada@sungas.org", "okewu.queen@sungas.org",
@@ -92,9 +139,49 @@ CASHIERS = {
     "c.echeazu@sungas.org", "ilami.akari@sungas.org", "abigail.nanee@sungas.org",
 }
 
+RETAIL_CUSTOMER_GROUP = "Retail"
 
-def _profile_exists(profile: str) -> bool:
-    return bool(frappe.db.exists("Role Profile", profile))
+
+# ------------------------------------------------------------------ #
+# 3.  Helpers
+# ------------------------------------------------------------------ #
+def _ensure_role(role_name: str) -> bool:
+    """Roles like Sales User / Accounts User must already exist in ERPNext;
+    only return True if they really do (do NOT auto-create stock roles)."""
+    if frappe.db.exists("Role", role_name):
+        return True
+    print(f"  [WARN] expected role missing: {role_name!r}")
+    return False
+
+
+def ensure_role_profile(profile_name: str, role_names: list[str]) -> None:
+    """Create or refresh a Role Profile to contain exactly the given roles."""
+    valid_roles = [r for r in role_names if _ensure_role(r)]
+    if not valid_roles:
+        print(f"  [SKIP] {profile_name!r}: no valid roles to bundle.")
+        return
+
+    if frappe.db.exists("Role Profile", profile_name):
+        doc = frappe.get_doc("Role Profile", profile_name)
+        existing = {r.role for r in (doc.roles or [])}
+        target = set(valid_roles)
+        if existing == target:
+            print(f"  [skip] Role Profile {profile_name!r} already correct ({len(target)} roles).")
+            return
+        doc.set("roles", [])
+        for r in valid_roles:
+            doc.append("roles", {"role": r})
+        doc.save(ignore_permissions=True)
+        print(f"  [upd ] Role Profile {profile_name!r} now bundles: {', '.join(sorted(target))}")
+        return
+
+    doc = frappe.get_doc({
+        "doctype": "Role Profile",
+        "role_profile": profile_name,
+        "roles": [{"role": r} for r in valid_roles],
+    })
+    doc.insert(ignore_permissions=True)
+    print(f"  [new ] Role Profile {profile_name!r} created with: {', '.join(sorted(valid_roles))}")
 
 
 def assign_role_profile(email: str, profile: str) -> tuple[str, str]:
@@ -104,72 +191,114 @@ def assign_role_profile(email: str, profile: str) -> tuple[str, str]:
 
     user = frappe.get_doc("User", email)
     current = (user.role_profile_name or "").strip()
-
-    # If already correctly assigned (both legacy and child-table), no-op.
     child_profiles = {row.role_profile for row in (user.get("role_profiles") or [])}
+
     if current == profile and child_profiles == {profile}:
         return "NOOP", f"already on {profile!r}"
 
-    # Overwrite: clear any existing role profiles, then assign the target one.
     user.role_profile_name = profile
     user.set("role_profiles", [])
     user.append("role_profiles", {"role_profile": profile})
-
-    # Saving the user with role_profile_name set causes Frappe to re-sync
-    # the user's `roles` child table from the Role Profile definition.
     user.save(ignore_permissions=True)
-
     return "OK", f"{current or '<none>'} -> {profile}"
 
 
+def ensure_retail_customer_group_perm(email: str) -> str:
+    """For cashiers: lock them to the Retail customer group via User Permission.
+    Returns one of {added, skip, missing-group}."""
+    if not frappe.db.exists("Customer Group", RETAIL_CUSTOMER_GROUP):
+        return "missing-group"
+
+    existing = frappe.get_all(
+        "User Permission",
+        filters={
+            "user": email,
+            "allow": "Customer Group",
+            "for_value": RETAIL_CUSTOMER_GROUP,
+        },
+        fields=["name"],
+        limit=1,
+    )
+    if existing:
+        return "skip"
+
+    doc = frappe.get_doc({
+        "doctype": "User Permission",
+        "user": email,
+        "allow": "Customer Group",
+        "for_value": RETAIL_CUSTOMER_GROUP,
+        "apply_to_all_doctypes": 1,
+    })
+    doc.insert(ignore_permissions=True)
+    return "added"
+
+
+# ------------------------------------------------------------------ #
+# 4.  Main
+# ------------------------------------------------------------------ #
 def main():
     print("=" * 78)
-    print(" Assign Role Profiles (overwrite) to plant managers + cashiers")
+    print(" Phase 5.5 -- LPG Role Profiles + cashier/manager assignment")
     print("=" * 78)
 
-    for profile in (CASHIER_PROFILE, MANAGER_PROFILE):
-        if not _profile_exists(profile):
-            print(f"  [FATAL] Role Profile {profile!r} not found - aborting.")
-            return
+    # ---- 4a. Ensure Role Profiles ----
+    print("\n[1] Ensure Role Profiles exist with the right bundles:")
+    for profile, roles in ROLE_PROFILES.items():
+        ensure_role_profile(profile, roles)
 
+    # ---- 4b. Assign profiles ----
     summary = {"updated": 0, "noop": 0, "missing": 0}
 
-    print(f"\n--- Plant Managers -> {MANAGER_PROFILE!r} ---")
-    for email in sorted(PLANT_MANAGERS):
-        status, detail = assign_role_profile(email, MANAGER_PROFILE)
-        if status == "MISSING_USER":
-            summary["missing"] += 1
-            print(f"  [MISS] {email}")
-            continue
-        if status == "OK":
-            summary["updated"] += 1
-            print(f"  [OK  ] {email:<40} {detail}")
-        else:
-            summary["noop"] += 1
-            print(f"  [skip] {email:<40} {detail}")
+    def _assign(group: set[str], profile: str, label: str) -> None:
+        print(f"\n--- {label} -> {profile!r} ---")
+        for email in sorted(group):
+            status, detail = assign_role_profile(email, profile)
+            if status == "MISSING_USER":
+                summary["missing"] += 1
+                print(f"  [MISS] {email}")
+                continue
+            if status == "OK":
+                summary["updated"] += 1
+                print(f"  [OK  ] {email:<40} {detail}")
+            else:
+                summary["noop"] += 1
+                print(f"  [skip] {email:<40} {detail}")
 
-    print(f"\n--- Cashiers -> {CASHIER_PROFILE!r} ---")
+    _assign(PLANT_MANAGERS, "LPG Plant Manager", "Plant Managers")
+    _assign(CASHIERS,       "LPG POS User",      "Cashiers")
+
+    # ---- 4c. Cashier-only User Permission: Customer Group = Retail ----
+    print(f"\n[3] Lock cashiers to Customer Group = {RETAIL_CUSTOMER_GROUP!r}:")
+    cust_summary = {"added": 0, "skip": 0, "missing-group": 0, "missing-user": 0}
     for email in sorted(CASHIERS):
-        status, detail = assign_role_profile(email, CASHIER_PROFILE)
-        if status == "MISSING_USER":
-            summary["missing"] += 1
-            print(f"  [MISS] {email}")
+        if not frappe.db.exists("User", email):
+            cust_summary["missing-user"] += 1
             continue
-        if status == "OK":
-            summary["updated"] += 1
-            print(f"  [OK  ] {email:<40} {detail}")
-        else:
-            summary["noop"] += 1
-            print(f"  [skip] {email:<40} {detail}")
-
-    frappe.db.commit()
+        status = ensure_retail_customer_group_perm(email)
+        cust_summary[status] = cust_summary.get(status, 0) + 1
+        if status == "added":
+            print(f"  [+   ] {email:<40} -> Customer Group = {RETAIL_CUSTOMER_GROUP}")
     print(
-        f"\n Summary: updated={summary['updated']}, "
-        f"already-correct={summary['noop']}, missing-user={summary['missing']}"
+        f"  Cashier User Permissions: added={cust_summary['added']}, "
+        f"already-set={cust_summary['skip']}, missing-group={cust_summary['missing-group']}, "
+        f"missing-user={cust_summary['missing-user']}"
     )
 
+    frappe.db.commit()
 
-# Allow `bench execute "exec(open('...').read())"` to find module-level defs.
+    print("\n" + "=" * 78)
+    print(
+        f" SUMMARY: profile-assignments updated={summary['updated']}, "
+        f"already-correct={summary['noop']}, missing-user={summary['missing']}"
+    )
+    print("=" * 78)
+    print("\nNote: To strictly block cashiers from EDITING existing Customer")
+    print("records, a small before_save hook is required (app code change +")
+    print("redeploy). User Permission already restricts visibility to the")
+    print("Retail group and forces new customers into Retail.")
+
+
+# Allow `bench execute "exec(open('...').read())"` to locate the functions.
 try:
     _g = globals()
     for _k, _v in list(locals().items()):
