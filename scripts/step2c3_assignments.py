@@ -67,9 +67,17 @@ NEW_CCS = [
     ("70013", "Operations Headquarters",   "Headquarters"),
 ]
 
-# Maps outlet -> sales CC name (used to find parent for Operations CC)
-def find_sales_cc(outlet: str) -> str | None:
-    """Return the full ERP name of the existing XX002 Sales CC for an outlet."""
+def _projected_cc_name(outlet: str, kind: str) -> str | None:
+    """If a new CC is queued in NEW_CCS for this outlet+kind, return its projected ERP name."""
+    label_prefix = "Operations " if kind == "op" else "Sales and Marketing "
+    for number, label, ol in NEW_CCS:
+        if ol == outlet and label.startswith(label_prefix):
+            return f"{number} - {label} - {ABBR}"
+    return None
+
+
+def find_sales_cc_with_parent(outlet: str) -> dict | None:
+    """Return existing XX002 Sales CC for an outlet, with name + parent_cost_center."""
     rows = frappe.get_all(
         "Cost Center",
         filters={"is_group": 0, "cost_center_name": ["like", f"%Sales and Marketing {outlet}%"]},
@@ -79,18 +87,24 @@ def find_sales_cc(outlet: str) -> str | None:
     return rows[0] if rows else None
 
 
-def find_hq_cc(account_number: str) -> str | None:
-    """Find HQ cost center by its account number prefix."""
-    rows = frappe.get_all(
-        "Cost Center",
-        filters={"is_group": 0, "name": ["like", f"{account_number} -%"]},
-        fields=["name"],
-        limit=1,
-    )
-    return rows[0]["name"] if rows else None
+def find_sales_cc(outlet: str) -> str | None:
+    """Return Sales CC name (existing or projected from NEW_CCS for new outlets)."""
+    row = find_sales_cc_with_parent(outlet)
+    if row:
+        return row["name"]
+    proj = _projected_cc_name(outlet, "sales")
+    if proj and frappe.db.exists("Cost Center", proj):
+        return proj
+    return proj  # may be None or projected (DRY_RUN before insert)
 
 
 def find_op_cc(outlet: str) -> str | None:
+    """Return Operations CC name (existing or projected from NEW_CCS)."""
+    proj = _projected_cc_name(outlet, "op")
+    if proj and frappe.db.exists("Cost Center", proj):
+        return proj
+    if proj:
+        return proj  # DRY_RUN: CC will be created on live run
     rows = frappe.get_all(
         "Cost Center",
         filters={"is_group": 0, "cost_center_name": ["like", f"%Operations {outlet}%"]},
@@ -98,6 +112,23 @@ def find_op_cc(outlet: str) -> str | None:
         limit=1,
     )
     return rows[0]["name"] if rows else None
+
+
+def find_hq_cc(account_number: str) -> str | None:
+    """Find HQ cost center by its account number prefix (existing or projected)."""
+    rows = frappe.get_all(
+        "Cost Center",
+        filters={"is_group": 0, "name": ["like", f"{account_number} -%"]},
+        fields=["name"],
+        limit=1,
+    )
+    if rows:
+        return rows[0]["name"]
+    # Projection (e.g. 70013 Operations HQ in DRY_RUN before insert)
+    for number, label, _ol in NEW_CCS:
+        if number == account_number:
+            return f"{number} - {label} - {ABBR}"
+    return None
 
 
 def create_cost_centers(report: list[str]) -> None:
@@ -116,7 +147,7 @@ def create_cost_centers(report: list[str]) -> None:
             report.append(f"  = `{target_name}` already exists")
             continue
         # Find sibling parent if possible
-        sibling = find_sales_cc(outlet) if outlet not in ("Headquarters",) else None
+        sibling = find_sales_cc_with_parent(outlet) if outlet not in ("Headquarters",) else None
         parent = sibling["parent_cost_center"] if sibling else default_parent
         if DRY_RUN:
             report.append(f"  + would-insert `{target_name}` under `{parent}`")
@@ -190,40 +221,37 @@ def resolve_cc_for_employee(emp: dict, hq_resolved: dict, report_warn: list[str]
 
     # Special: HQ finance staff override
     if desig in HQ_FINANCE_DESIGNATIONS:
-        return hq_resolved["Finance"]
+        return hq_resolved.get("Finance")
 
     # Special: Cashiers always route to outlet Sales CC
     if desig == "Cashier":
-        cc = find_sales_cc(branch)
-        return cc["name"] if cc else None
+        return find_sales_cc(branch)
 
     # Department-level routing
     if "Sales" in dept:  # Sales & Marketing
-        cc = find_sales_cc(branch)
-        return cc["name"] if cc else hq_resolved["Sales_HO"]
+        return find_sales_cc(branch) or hq_resolved.get("Sales_HO")
 
     if "Operations" in dept or "Logistics" in dept or "Technical" in dept:
-        cc = find_op_cc(branch)
-        return cc["name"] if cc else hq_resolved["Operations_HQ"]
+        return find_op_cc(branch) or hq_resolved.get("Operations_HQ")
 
     if "Customer Service" in dept:
-        return hq_resolved["Sales_HO"]
+        return hq_resolved.get("Sales_HO")
 
     if "HR" in dept:
-        return hq_resolved["HR_Admin"]
+        return hq_resolved.get("HR_Admin")
 
     if "Internal Control" in dept:
-        return hq_resolved["Internal_Control"]
+        return hq_resolved.get("Internal_Control")
 
     if "Executive" in dept:
-        return hq_resolved["Executive"]
+        return hq_resolved.get("Executive")
 
     if "Stores" in dept:
-        return hq_resolved["Procurement"]
+        return hq_resolved.get("Procurement")
 
     if "Finance" in dept:
         # Could be a Cashier (handled above) -- non-cashier non-HQ Finance fallback
-        return hq_resolved["Finance"]
+        return hq_resolved.get("Finance")
 
     report_warn.append(f"    ⚠ unresolved: {emp['name']} ({emp['employee_name']}) -- desig={desig!r}, dept={dept!r}, branch={branch!r}")
     return None
