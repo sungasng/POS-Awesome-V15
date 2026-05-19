@@ -48,12 +48,16 @@ def _tokenise(name: str) -> frozenset[str]:
 def build_employee_index() -> dict:
     """{ token_set: [employee_doc_dict, ...] } over all live employees."""
     idx = defaultdict(list)
-    fields = [
+    desired = [
         "name", "employee_name", "status", "designation", "department",
-        "branch", "company", "cost_center", "user_id", "date_of_joining",
-        "salary_mode", "pan_number", "iban", "bank_name", "bank_ac_no",
-        "pf_number", "gender",
+        "branch", "company", "cost_center", "payroll_cost_center",
+        "user_id", "date_of_joining", "salary_mode", "pan_number", "iban",
+        "bank_name", "bank_ac_no", "pf_number", "gender",
     ]
+    # Only request fields that actually exist on this site's Employee meta
+    # (v15 dropped some, sites add some via custom fields).
+    meta = frappe.get_meta("Employee")
+    fields = [f for f in desired if f in {"name", "employee_name"} or meta.has_field(f)]
     for emp in frappe.get_all("Employee", filters={}, fields=fields):
         idx[_tokenise(emp["employee_name"] or "")].append(emp)
     return idx
@@ -126,10 +130,13 @@ def build_report() -> str:
                 band_counts[(lo, hi)] += 1
                 break
 
-    # field-completeness sweep on matched rows
+    # field-completeness sweep on matched rows (meta-aware -- skip non-existent fields)
     field_gaps = Counter()
-    field_to_check = ["designation", "department", "branch", "cost_center",
-                      "user_id", "bank_name", "bank_ac_no", "pf_number", "pan_number"]
+    candidate_fields = ["designation", "department", "branch", "cost_center",
+                        "payroll_cost_center", "user_id", "bank_name",
+                        "bank_ac_no", "pf_number", "pan_number"]
+    emp_meta = frappe.get_meta("Employee")
+    field_to_check = [f for f in candidate_fields if emp_meta.has_field(f)]
     for _, emp in matched:
         for f in field_to_check:
             if not emp.get(f):
