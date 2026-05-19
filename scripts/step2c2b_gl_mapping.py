@@ -60,36 +60,41 @@ OTHER_PAYABLES_PARENT = "6200 - Other Payables - SCL"
 
 NEW_ACCOUNTS = [
     {
-        "account_name": "6215 - HMO - Payable",
-        "account_number": "6215",
+        "key": "HMO_PAYABLE",
+        "account_name_base": "HMO - Payable",
+        "number_range": (6219, 6299),
         "account_type": "Payable",
         "root_type": "Liability",
         "parent": OTHER_PAYABLES_PARENT,
     },
     {
-        "account_name": "6216 - Cooperative Loan - Payable",
-        "account_number": "6216",
+        "key": "COOP_LOAN",
+        "account_name_base": "Cooperative Loan - Payable",
+        "number_range": (6219, 6299),
         "account_type": "Payable",
         "root_type": "Liability",
         "parent": OTHER_PAYABLES_PARENT,
     },
     {
-        "account_name": "6218 - Cooperative Contribution - Payable",
-        "account_number": "6218",
+        "key": "COOP_CONTRIB",
+        "account_name_base": "Cooperative Contribution - Payable",
+        "number_range": (6219, 6299),
         "account_type": "Payable",
         "root_type": "Liability",
         "parent": OTHER_PAYABLES_PARENT,
     },
-    # Staff Loan Receivable -- parent decided at runtime by scanning for a
-    # suitable "Other Receivables" group; falls back to "Loans and Advances".
     {
-        "account_name": "1701 - Staff Loan Receivable",
-        "account_number": "1701",
+        "key": "STAFF_LOAN",
+        "account_name_base": "Staff Loan Receivable",
+        "number_range": (2900, 2999),  # Outside existing ranges (Prepayments 2800-2899 used)
         "account_type": "Receivable",
         "root_type": "Asset",
-        "parent": None,  # resolved dynamically
+        "parent": None,
     },
 ]
+
+# Filled in at runtime by upsert_account -- maps key -> actual ERP account name
+RESOLVED_ACCOUNTS: dict[str, str] = {}
 
 # ---------------------------------------------------------------------------
 # 2. Component -> account mapping.
@@ -115,10 +120,11 @@ COMPONENT_ACCOUNT_MAP = {
     "Pension Employee":           "6211 - Pension - Payable - SCL",
     "Pension Employer":           "6211 - Pension - Payable - SCL",
     "PAYE":                       "6212 - PAYE - Payable - SCL",
-    "HMO Top-up (Staff Paid)":    "6215 - HMO - Payable - SCL",
-    "Loan Repayment":             "1701 - Staff Loan Receivable - SCL",
-    "COOP Loan Repayment":        "6216 - Cooperative Loan - Payable - SCL",
-    "Cooperative Contribution":   "6218 - Cooperative Contribution - Payable - SCL",
+    # Resolved dynamically at runtime via RESOLVED_ACCOUNTS
+    "HMO Top-up (Staff Paid)":    "HMO_PAYABLE",
+    "Loan Repayment":             "STAFF_LOAN",
+    "COOP Loan Repayment":        "COOP_LOAN",
+    "Cooperative Contribution":   "COOP_CONTRIB",
 }
 
 # Expense-side override for "statistical employer cost" deductions. These need to
@@ -141,76 +147,107 @@ def detect_company() -> tuple[str | None, str | None]:
 
 
 def resolve_staff_loan_parent() -> str:
-    """Find a sensible parent for 1701 - Staff Loan Receivable."""
+    """Find a sensible parent for the new Staff Loan Receivable account."""
     # Try common parents first
     candidates = [
         "1700 - Other Receivables - SCL",
-        "1700 - Loans and Advances - SCL",
+        "2500 - 2799 - Account Receivables - SCL",
         "1500 - Loans and Advances - SCL",
         "1500 - Current Assets - SCL",
     ]
     for c in candidates:
         if frappe.db.exists("Account", c):
             return c
-    # Fallback: first asset group whose name contains "receivable" or "advance" or "current asset"
     groups = frappe.get_all(
         "Account",
         filters={"is_group": 1, "root_type": "Asset"},
         fields=["name"],
     )
-    for kw in ["receivable", "advance", "current asset"]:
+    for kw in ["receivable", "advance", "loans"]:
         for g in groups:
             if kw in g["name"].lower():
                 return g["name"]
     raise RuntimeError("Could not resolve parent for Staff Loan Receivable")
 
 
-def upsert_account(spec: dict, report: list[str]) -> str | None:
-    """Create account if missing. Returns the full ERP account name (with suffix)."""
-    expected_name = f"{spec['account_name']} - {ABBR}"
-    if frappe.db.exists("Account", expected_name):
-        report.append(f"  = `{expected_name}` already exists")
-        return expected_name
-    # Also check by account_number to catch numbering collisions
-    if spec.get("account_number"):
-        existing = frappe.get_all(
+def find_next_free_number(start: int, end: int) -> int | None:
+    """Return first integer in [start, end] not used by any Account (any company)."""
+    used = {
+        int(r["account_number"])
+        for r in frappe.get_all(
             "Account",
-            filters={"account_number": spec["account_number"], "company": COMPANY},
-            fields=["name"],
-            limit=1,
+            filters={"account_number": ["between", [str(start), str(end)]]},
+            fields=["account_number"],
         )
-        if existing:
-            report.append(
-                f"  ! account_number {spec['account_number']} already taken by "
-                f"`{existing[0]['name']}` -- SKIP. Update COMPONENT_ACCOUNT_MAP to point there."
-            )
-            return None
+        if r.get("account_number") and r["account_number"].isdigit()
+    }
+    for n in range(start, end + 1):
+        if n not in used:
+            return n
+    return None
+
+
+def upsert_account(spec: dict, report: list[str]) -> str | None:
+    """Find a free account_number in range, then create. Returns full ERP name."""
+    # First check if a matching account already exists (by name pattern)
+    base = spec["account_name_base"]
+    existing = frappe.get_all(
+        "Account",
+        filters={
+            "account_name": ["like", f"%{base}%"],
+            "company": COMPANY,
+            "is_group": 0,
+            "root_type": spec["root_type"],
+        },
+        fields=["name", "account_number"],
+        limit=5,
+    )
+    if existing:
+        report.append(f"  = `{existing[0]['name']}` already exists (matched on name)")
+        if spec.get("key"):
+            RESOLVED_ACCOUNTS[spec["key"]] = existing[0]["name"]
+        return existing[0]["name"]
+
+    lo, hi = spec["number_range"]
+    free = find_next_free_number(lo, hi)
+    if free is None:
+        report.append(f"  ! no free number in {lo}-{hi} range, skip `{base}`")
+        return None
+
+    full_name_base = f"{free} - {base}"
+    expected_name = f"{full_name_base} - {ABBR}"
     if DRY_RUN:
         report.append(f"  + would-insert `{expected_name}` under `{spec['parent']}`")
+        if spec.get("key"):
+            RESOLVED_ACCOUNTS[spec["key"]] = expected_name
         return expected_name
+
     doc = frappe.get_doc({
         "doctype": "Account",
-        "account_name": spec["account_name"],
-        "account_number": spec.get("account_number"),
+        "account_name": full_name_base,
+        "account_number": str(free),
         "parent_account": spec["parent"],
         "is_group": 0,
         "company": COMPANY,
         "account_type": spec.get("account_type") or "",
         "root_type": spec["root_type"],
     }).insert(ignore_permissions=True, ignore_if_duplicate=True)
-    report.append(f"  + inserted `{doc.name}` (type={spec.get('account_type') or '-'})")
+    report.append(f"  + inserted `{doc.name}` (number={free}, type={spec.get('account_type') or '-'})")
+    if spec.get("key"):
+        RESOLVED_ACCOUNTS[spec["key"]] = doc.name
     return doc.name
 
 
-def wire_component_account(component: str, account: str, report: list[str]) -> None:
+def wire_component_account(component: str, account_or_key: str, report: list[str]) -> None:
     if not frappe.db.exists("Salary Component", component):
         report.append(f"  ! Salary Component `{component}` not found, skip")
         return
+    # If the value is a placeholder key, resolve it
+    account = RESOLVED_ACCOUNTS.get(account_or_key, account_or_key)
     if not frappe.db.exists("Account", account):
-        report.append(f"  ! Account `{account}` not found, skip")
+        report.append(f"  ! Account `{account}` not found, skip `{component}`")
         return
     doc = frappe.get_doc("Salary Component", component)
-    # Idempotent: replace any existing row for this Company, keep others.
     existing = [r for r in (doc.accounts or []) if r.company == COMPANY]
     if existing and existing[0].account == account:
         report.append(f"  = `{component}` already mapped to `{account}`")
@@ -219,7 +256,6 @@ def wire_component_account(component: str, account: str, report: list[str]) -> N
         action = "update" if existing else "insert"
         report.append(f"  ~ would-{action}: `{component}` -> `{account}`")
         return
-    # Remove old rows for this company
     doc.accounts = [r for r in (doc.accounts or []) if r.company != COMPANY]
     doc.append("accounts", {"company": COMPANY, "account": account})
     doc.save(ignore_permissions=True)
@@ -245,7 +281,7 @@ def main():
     # Resolve Staff Loan parent
     staff_loan_parent = resolve_staff_loan_parent()
     for spec in NEW_ACCOUNTS:
-        if spec["account_name"].startswith("1701"):
+        if spec.get("key") == "STAFF_LOAN":
             spec["parent"] = staff_loan_parent
 
     # 1. Create missing accounts
