@@ -192,7 +192,7 @@ POSITION_TO_DESIGNATION = {
     "SUPERVISOR": "Supervisor",
 }
 
-# Excel outlet -> HRMS Branch (case-insensitive lookup will normalise)
+# Excel outlet -> HRMS Branch (canonical ERP spellings, verified via inventory_branches.py)
 OUTLET_TO_BRANCH_HINT = {
     "HEADQUATERS": "Headquarters",
     "IKEJA": "Ikeja",
@@ -311,16 +311,24 @@ def _tokenise(name: str) -> frozenset[str]:
 
 
 def find_branch(hint: str | None) -> str | None:
-    """Resolve outlet name to a real HRMS Branch (case-insensitive)."""
+    """Resolve outlet name to a real HRMS Branch (case-insensitive).
+    First tries the canonical name from OUTLET_TO_BRANCH_HINT, then falls
+    back to direct fuzzy match."""
     if not hint:
         return None
-    for b in frappe.get_all("Branch", fields=["name", "branch"]):
-        if hint.upper() == (b.get("branch") or b["name"]).upper():
-            return b["name"]
-    # try canonical hint as last resort
+    # 1. Canonical remap (handles HEADQUATERS -> Headquarters)
     canon = OUTLET_TO_BRANCH_HINT.get(hint.upper(), hint)
+    if canon and frappe.db.exists("Branch", canon):
+        return canon
+    # 2. Direct exact match
+    if frappe.db.exists("Branch", hint):
+        return hint
+    # 3. Case-insensitive scan
     for b in frappe.get_all("Branch", fields=["name", "branch"]):
-        if canon.upper() == (b.get("branch") or b["name"]).upper():
+        candidate = b.get("branch") or b["name"]
+        if hint.upper() == candidate.upper():
+            return b["name"]
+        if canon and canon.upper() == candidate.upper():
             return b["name"]
     return None
 
