@@ -57,26 +57,30 @@ COMPANY = None  # auto-detected
 # ACTUAL EMPLOYEE RENT RELIEF (lesser of 500K or 20% * annual rent paid) BEFORE
 # JUNE 25 GO-LIVE.
 # ---------------------------------------------------------------------------
-PAYE_FORMULA = """\
-# === STUB: NTAA 2025 PAYE -- review before June 25 go-live ===
-annual_gross = gross_pay * 12
-annual_taxable = max(0, annual_gross - 500000)
-if annual_taxable <= 800000:
-    tax = 0
-elif annual_taxable <= 3000000:
-    tax = (annual_taxable - 800000) * 0.15
-elif annual_taxable <= 12000000:
-    tax = 2200000 * 0.15 + (annual_taxable - 3000000) * 0.18
-elif annual_taxable <= 25000000:
-    tax = 2200000 * 0.15 + 9000000 * 0.18 + (annual_taxable - 12000000) * 0.21
-elif annual_taxable <= 50000000:
-    tax = (2200000 * 0.15 + 9000000 * 0.18 + 13000000 * 0.21 +
-           (annual_taxable - 25000000) * 0.23)
-else:
-    tax = (2200000 * 0.15 + 9000000 * 0.18 + 13000000 * 0.21 +
-           25000000 * 0.23 + (annual_taxable - 50000000) * 0.25)
-PAYE = tax / 12
-"""
+PAYE_FORMULA = (
+    # === STUB: NTAA 2025 PAYE (Option A) -- single-expression ternary chain ===
+    # Annual taxable income = annual gross - 500K Rent Relief (placeholder).
+    # Bands evaluated against annual taxable, result divided by 12 for monthly PAYE.
+    #
+    # Pre-computed cumulative tax at each band ceiling:
+    #   B0 ≤ 800K   ->         0
+    #   B1 ≤ 3M     -> (t-800K)*15%
+    #   B2 ≤ 12M    -> 330K   + (t-3M)*18%
+    #   B3 ≤ 25M    -> 1.95M  + (t-12M)*21%
+    #   B4 ≤ 50M    -> 4.68M  + (t-25M)*23%
+    #   B5 > 50M    -> 10.43M + (t-50M)*25%
+    "((0 if max(0, gross_pay*12 - 500000) <= 800000 "
+    "else (max(0, gross_pay*12 - 500000) - 800000) * 0.15 "
+    "  if max(0, gross_pay*12 - 500000) <= 3000000 "
+    "else 330000 + (max(0, gross_pay*12 - 500000) - 3000000) * 0.18 "
+    "  if max(0, gross_pay*12 - 500000) <= 12000000 "
+    "else 1950000 + (max(0, gross_pay*12 - 500000) - 12000000) * 0.21 "
+    "  if max(0, gross_pay*12 - 500000) <= 25000000 "
+    "else 4680000 + (max(0, gross_pay*12 - 500000) - 25000000) * 0.23 "
+    "  if max(0, gross_pay*12 - 500000) <= 50000000 "
+    "else 10430000 + (max(0, gross_pay*12 - 500000) - 50000000) * 0.25)"
+    ") / 12"
+)
 
 
 # ---------------------------------------------------------------------------

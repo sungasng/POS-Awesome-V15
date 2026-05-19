@@ -127,24 +127,48 @@ def seed_hmo_custom_fields(report: list[str]) -> None:
 # ---------------------------------------------------------------------------
 
 def fix_paye_flag(report: list[str]) -> None:
-    report.append("## 2b. Strip `variable_based_on_taxable_salary` flag from PAYE")
+    report.append("## 2b. Fix PAYE: clear `variable_based_on_taxable_salary` flag + repair formula")
     report.append("")
     if not frappe.db.exists("Salary Component", "PAYE"):
         report.append("  ! PAYE component not found")
         report.append("")
         return
     doc = frappe.get_doc("Salary Component", "PAYE")
-    if not doc.get("variable_based_on_taxable_salary"):
-        report.append("  = flag already off")
+
+    # Single-expression NTAA 2025 stub. Cumulative tax at each band ceiling baked in.
+    new_formula = (
+        "((0 if max(0, gross_pay*12 - 500000) <= 800000 "
+        "else (max(0, gross_pay*12 - 500000) - 800000) * 0.15 "
+        "  if max(0, gross_pay*12 - 500000) <= 3000000 "
+        "else 330000 + (max(0, gross_pay*12 - 500000) - 3000000) * 0.18 "
+        "  if max(0, gross_pay*12 - 500000) <= 12000000 "
+        "else 1950000 + (max(0, gross_pay*12 - 500000) - 12000000) * 0.21 "
+        "  if max(0, gross_pay*12 - 500000) <= 25000000 "
+        "else 4680000 + (max(0, gross_pay*12 - 500000) - 25000000) * 0.23 "
+        "  if max(0, gross_pay*12 - 500000) <= 50000000 "
+        "else 10430000 + (max(0, gross_pay*12 - 500000) - 50000000) * 0.25)"
+        ") / 12"
+    )
+
+    changes = []
+    if doc.get("variable_based_on_taxable_salary"):
+        doc.variable_based_on_taxable_salary = 0
+        changes.append("cleared variable_based_on_taxable_salary flag")
+    if doc.formula != new_formula:
+        doc.formula = new_formula
+        doc.amount_based_on_formula = 1
+        changes.append("repaired formula to single-expression ternary chain")
+
+    if not changes:
+        report.append("  = no changes needed")
         report.append("")
         return
     if DRY_RUN:
-        report.append("  ~ would-clear flag")
+        report.append("  ~ would-apply: " + "; ".join(changes))
         report.append("")
         return
-    doc.variable_based_on_taxable_salary = 0
     doc.save(ignore_permissions=True)
-    report.append("  ~ flag cleared (now uses self-contained NTAA 2025 stub formula)")
+    report.append("  ~ " + "; ".join(changes))
     report.append("")
 
 
