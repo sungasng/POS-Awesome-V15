@@ -503,7 +503,14 @@ def archive_employee(emp_id: str, note: str, effective: str = "2026-04-30") -> t
     if doc.status == "Left":
         return "already-left", False
     doc.status = "Left"
-    doc.relieving_date = effective
+    # Relieving date must be >= date_of_joining; bump forward if necessary
+    from frappe.utils import getdate, add_days
+    eff_dt = getdate(effective)
+    if doc.date_of_joining:
+        dj = getdate(doc.date_of_joining)
+        if eff_dt < dj:
+            eff_dt = add_days(dj, 1)
+    doc.relieving_date = eff_dt
     if doc.bio:
         doc.bio = (doc.bio or "") + f"\n[Step 2a auto-archive {frappe.utils.today()}] {note}"
     else:
