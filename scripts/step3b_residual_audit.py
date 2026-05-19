@@ -44,21 +44,28 @@ UNMATCHED_NAMES = [
 ]
 
 
+def _tokens(s: str) -> frozenset[str]:
+    return frozenset(t for t in re.split(r"[^A-Za-z]+", (s or "").upper()) if t)
+
+
 def _norm(s: str) -> str:
     return re.sub(r"[^A-Z]+", " ", (s or "").upper()).strip()
 
 
 def fuzzy_candidates(target: str, employees: list[dict], top_n: int = 5) -> list[tuple[float, dict]]:
     norm_target = _norm(target)
-    target_tokens = set(norm_target.split())
+    target_tokens = _tokens(target)
     scored = []
     for emp in employees:
         norm_emp = _norm(emp["employee_name"] or "")
-        # Score = ratio + token-overlap bonus
+        emp_tokens = _tokens(emp["employee_name"] or "")
+        # Score = ordered ratio + token-set bonus
         ratio = SequenceMatcher(None, norm_target, norm_emp).ratio()
-        emp_tokens = set(norm_emp.split())
-        overlap = len(target_tokens & emp_tokens)
-        score = ratio + (0.1 * overlap)
+        # If token sets are equal -> name is just reordered. Treat as near-perfect match.
+        token_match = 1.0 if target_tokens == emp_tokens and target_tokens else 0.0
+        # Otherwise overlap bonus
+        overlap = 0 if token_match else len(target_tokens & emp_tokens)
+        score = max(ratio + (0.1 * overlap), token_match * 0.95 + ratio * 0.05)
         scored.append((score, emp))
     scored.sort(key=lambda x: -x[0])
     return scored[:top_n]
