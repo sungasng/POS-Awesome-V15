@@ -126,6 +126,29 @@ def seed_hmo_custom_fields(report: list[str]) -> None:
 # 2. Update Medical Allowance to statistical + formula-from-Employee-field
 # ---------------------------------------------------------------------------
 
+def fix_paye_flag(report: list[str]) -> None:
+    report.append("## 2b. Strip `variable_based_on_taxable_salary` flag from PAYE")
+    report.append("")
+    if not frappe.db.exists("Salary Component", "PAYE"):
+        report.append("  ! PAYE component not found")
+        report.append("")
+        return
+    doc = frappe.get_doc("Salary Component", "PAYE")
+    if not doc.get("variable_based_on_taxable_salary"):
+        report.append("  = flag already off")
+        report.append("")
+        return
+    if DRY_RUN:
+        report.append("  ~ would-clear flag")
+        report.append("")
+        return
+    doc.variable_based_on_taxable_salary = 0
+    doc.save(ignore_permissions=True)
+    report.append("  ~ flag cleared (now uses self-contained NTAA 2025 stub formula)")
+    report.append("")
+
+
+
 def update_medical_allowance(report: list[str]) -> None:
     report.append("## 2. Update `Medical Allowance` -> statistical, premium-driven")
     report.append("")
@@ -350,6 +373,7 @@ def main():
 
     seed_hmo_custom_fields(report)
     update_medical_allowance(report)
+    fix_paye_flag(report)
     add_hmo_topup_component(report)
     backfill_hmo_defaults(report)
     upsert_salary_structure(report)

@@ -142,7 +142,9 @@ COMPONENTS = [
         "name": "PAYE", "abbr": "PAYE", "type": "Deduction",
         "formula": PAYE_FORMULA,
         "is_tax_applicable": 0, "depends_on_payment_days": 0,
-        "variable_based_on_taxable_salary": 1,
+        # Note: NOT using variable_based_on_taxable_salary -- that flag requires
+        # an Income Tax Slab doctype and forbids custom formulas. Our self-contained
+        # NTAA 2025 stub lives entirely in the formula field instead.
         "do_not_include_in_total": 0,
     },
     {
