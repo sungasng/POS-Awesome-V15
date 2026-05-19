@@ -172,15 +172,17 @@ def resolve_staff_loan_parent() -> str:
 
 def find_next_free_number(start: int, end: int) -> int | None:
     """Return first integer in [start, end] not used by any Account (any company)."""
-    used = {
-        int(r["account_number"])
-        for r in frappe.get_all(
-            "Account",
-            filters={"account_number": ["between", [str(start), str(end)]]},
-            fields=["account_number"],
-        )
-        if r.get("account_number") and r["account_number"].isdigit()
-    }
+    used = set()
+    rows = frappe.get_all(
+        "Account",
+        filters={"account_number": ["is", "set"]},
+        fields=["account_number"],
+    )
+    for r in rows:
+        if r.get("account_number") and r["account_number"].isdigit():
+            n = int(r["account_number"])
+            if start <= n <= end:
+                used.add(n)
     for n in range(start, end + 1):
         if n not in used:
             return n
