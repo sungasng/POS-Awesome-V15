@@ -45,6 +45,23 @@ DEFAULT_COMPANY = None   # auto-detected
 # 1. Master data definitions
 # ---------------------------------------------------------------------------
 
+# Alias map: my logical names -> common ERP variants to probe before creating
+DEPT_ALIASES = {
+    "Finance & Accounts": ["Finance"],
+    "HR & Admin": ["Human Resources and Admin", "Human Resources & Admin", "HR and Admin"],
+    "Sales & Marketing": ["Sales and Marketing"],
+    "Internal Control": ["Audit and Internal Control"],
+    "Logistics & Fleet": [],  # genuinely new
+    "Stores & Inventory": [],  # genuinely new
+    "Technical Services": ["Projects and Engineering Service"],
+    "Executive": ["MD's Office"],
+}
+
+# Populated at runtime by seed_departments(): logical name -> ERP record name
+DEPT_NAME_MAP: dict[str, str] = {}
+
+EMPLOYMENT_TYPES = ["Freelance", "Contract", "Intern", "Temporary"]
+
 DEPARTMENTS = [
     "Executive",
     "Operations",
@@ -57,8 +74,6 @@ DEPARTMENTS = [
     "Stores & Inventory",
     "Technical Services",
 ]
-
-EMPLOYMENT_TYPES = ["Freelance", "Contract", "Intern", "Temporary"]
 
 # Canonical Designation -> Department
 DESIGNATION_TO_DEPT = {
@@ -368,16 +383,46 @@ def upsert_doc(doctype: str, name: str, fields: dict) -> tuple[str, bool]:
 # 3. Master-data seeding
 # ---------------------------------------------------------------------------
 
+def find_or_create_department(logical_name: str, company_abbr: str, report: list[str]) -> str:
+    """Find existing Department (probing alias variants) or create a new one.
+    Returns the actual ERP `name` (which Frappe auto-suffixes with company abbr).
+    """
+    probes = [logical_name, *DEPT_ALIASES.get(logical_name, [])]
+    for probe in probes:
+        # direct name lookup (with & without abbr suffix)
+        for n in (probe, f"{probe} - {company_abbr}"):
+            if frappe.db.exists("Department", n):
+                return n
+        # lookup by department_name field
+        matches = frappe.get_all(
+            "Department", filters={"department_name": probe}, fields=["name"], limit=1,
+        )
+        if matches:
+            return matches[0]["name"]
+    # Not found anywhere -- create.
+    if DRY_RUN:
+        report.append(f"  + would-insert Department `{logical_name}`")
+        return f"{logical_name} - {company_abbr}"
+    doc = frappe.get_doc({
+        "doctype": "Department",
+        "department_name": logical_name,
+        "company": DEFAULT_COMPANY,
+    }).insert(ignore_permissions=True, ignore_if_duplicate=True)
+    report.append(f"  + Department `{doc.name}` inserted")
+    return doc.name
+
+
 def seed_departments(report: list[str]) -> None:
     report.append("## 1. Departments")
     report.append("")
-    for name in DEPARTMENTS:
-        action, changed = upsert_doc(
-            "Department", name,
-            {"department_name": name, "company": DEFAULT_COMPANY},
-        )
-        marker = "+" if action.startswith("would-insert") or action == "inserted" else ("~" if changed else "=")
-        report.append(f"  {marker} {name}")
+    company_abbr = frappe.db.get_value("Company", DEFAULT_COMPANY, "abbr") or "SCL"
+    for logical in DEPARTMENTS:
+        erp_name = find_or_create_department(logical, company_abbr, report)
+        DEPT_NAME_MAP[logical] = erp_name
+        if erp_name not in (logical, f"{logical} - {company_abbr}"):
+            report.append(f"    -> logical `{logical}` mapped to existing ERP `{erp_name}`")
+        elif erp_name == f"{logical} - {company_abbr}":
+            report.append(f"  = `{erp_name}` already exists")
     report.append("")
 
 
@@ -385,12 +430,17 @@ def seed_employment_types(report: list[str]) -> None:
     report.append("## 2. Employment Types")
     report.append("")
     for name in EMPLOYMENT_TYPES:
-        action, changed = upsert_doc(
-            "Employment Type", name,
-            {"employee_type_name": name},
-        )
-        marker = "+" if action.startswith("would-insert") or action == "inserted" else "="
-        report.append(f"  {marker} {name}")
+        if frappe.db.exists("Employment Type", name):
+            report.append(f"  = `{name}` already exists")
+            continue
+        if DRY_RUN:
+            report.append(f"  + would-insert `{name}`")
+            continue
+        frappe.get_doc({
+            "doctype": "Employment Type",
+            "employee_type_name": name,
+        }).insert(ignore_permissions=True, ignore_if_duplicate=True)
+        report.append(f"  + `{name}` inserted")
     report.append("")
 
 
@@ -398,19 +448,20 @@ def seed_designations(report: list[str]) -> None:
     report.append("## 3. Designations")
     report.append("")
     all_desig = sorted(set(DESIGNATION_TO_DEPT.keys()))
-    inserted = updated = noop = 0
+    inserted = noop = 0
     for desig in all_desig:
-        action, changed = upsert_doc(
-            "Designation", desig,
-            {"designation_name": desig},
-        )
-        if action == "inserted" or action == "would-insert":
-            inserted += 1
-        elif changed:
-            updated += 1
-        else:
+        if frappe.db.exists("Designation", desig):
             noop += 1
-    report.append(f"  {len(all_desig)} canonical designations -- inserted={inserted}, updated={updated}, no-op={noop}")
+            continue
+        if DRY_RUN:
+            inserted += 1
+            continue
+        frappe.get_doc({
+            "doctype": "Designation",
+            "designation_name": desig,
+        }).insert(ignore_permissions=True, ignore_if_duplicate=True)
+        inserted += 1
+    report.append(f"  {len(all_desig)} canonical designations -- inserted/would-insert={inserted}, already-exist={noop}")
     report.append("")
 
 
@@ -468,7 +519,8 @@ def rename_employee(spec: dict, report: list[str]) -> None:
         return
     doc = frappe.get_doc("Employee", emp_id)
     branch = find_branch(spec.get("branch_hint"))
-    dept = DESIGNATION_TO_DEPT.get(spec["designation"])
+    dept_logical = DESIGNATION_TO_DEPT.get(spec["designation"])
+    dept = DEPT_NAME_MAP.get(dept_logical, dept_logical) if dept_logical else None
     if DRY_RUN:
         report.append(f"  ~ would-rename {emp_id}: {doc.employee_name!r} -> {spec['new_name']!r}, desig={spec['designation']}, dept={dept}, branch={branch}")
         return
@@ -493,7 +545,8 @@ def patch_off_payroll(report: list[str]) -> None:
         if not frappe.db.exists("Employee", emp_id):
             report.append(f"  ! {emp_id} not found")
             continue
-        dept = DESIGNATION_TO_DEPT.get(desig)
+        dept_logical = DESIGNATION_TO_DEPT.get(desig)
+        dept = DEPT_NAME_MAP.get(dept_logical, dept_logical) if dept_logical else None
         branch = find_branch(branch_hint)
         patch = {
             "designation": desig,
@@ -522,7 +575,8 @@ def patch_okhuoromi(report: list[str]) -> None:
         if not frappe.db.exists("Employee", emp_id):
             report.append(f"  ! {emp_id} not found")
             continue
-        dept = DESIGNATION_TO_DEPT.get(desig)
+        dept_logical = DESIGNATION_TO_DEPT.get(desig)
+        dept = DEPT_NAME_MAP.get(dept_logical, dept_logical) if dept_logical else None
         branch = find_branch(branch_hint)
         patch = {
             "designation": desig,
@@ -560,13 +614,16 @@ def create_babajide(report: list[str]) -> None:
         report.append("  + would-insert (DRY RUN)")
         report.append("")
         return
-    doc = frappe.get_doc({
+    doc_data = {
         "doctype": "Employee",
         "company": DEFAULT_COMPANY,
         **BABAJIDE,
-    })
+    }
+    # Re-route logical "Internal Control" to whatever ERP actually named it
+    doc_data["department"] = DEPT_NAME_MAP.get(BABAJIDE["department"], BABAJIDE["department"])
+    doc = frappe.get_doc(doc_data)
     doc.insert(ignore_permissions=True)
-    report.append(f"  + inserted: {doc.name} (Babajide Rufus Ige)")
+    report.append(f"  + inserted: {doc.name} (Babajide Rufus Ige, dept={doc.department})")
     report.append("")
 
 
@@ -623,7 +680,8 @@ def patch_payroll_staff(report: list[str]) -> None:
         if not desig:
             unresolved.append({**row, "_reason": f"no designation map for {row['position']!r}"})
             continue
-        dept = DESIGNATION_TO_DEPT.get(desig)
+        dept_logical = DESIGNATION_TO_DEPT.get(desig)
+        dept = DEPT_NAME_MAP.get(dept_logical, dept_logical) if dept_logical else None
         branch = find_branch(row["outlet"]) or find_branch(OUTLET_TO_BRANCH_HINT.get(row["outlet"].upper()))
         cc = find_cost_center(OUTLET_TO_BRANCH_HINT.get(row["outlet"].upper()) or row["outlet"])
 
@@ -648,7 +706,7 @@ def patch_payroll_staff(report: list[str]) -> None:
             doc.save(ignore_permissions=True)
             patched += 1
         by_designation[desig] += 1
-        by_dept[dept] += 1
+        by_dept[dept_logical or "(unmapped)"] += 1
 
     report.append(f"  - patched: **{patched}** / {len(ROSTER)}")
     report.append(f"  - unresolved: {len(unresolved)}")
