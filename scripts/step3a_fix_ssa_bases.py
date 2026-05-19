@@ -101,7 +101,7 @@ def main():
                 "from_date": FROM_DATE,
                 "docstatus": 1,
             },
-            fields=["name", "base", "payroll_cost_center"],
+            fields=["name", "base"],
             limit=1,
         )
         if not ssa:
@@ -119,7 +119,6 @@ def main():
                 "emp_name": emp["employee_name"],
                 "current_base": current_base,
                 "correct_base": correct_base,
-                "payroll_cc": ssa_row.get("payroll_cost_center"),
                 "payroll_name": row["name"],
             })
 
@@ -154,8 +153,6 @@ def main():
                 "base": fix["correct_base"],
                 "company": frappe.defaults.get_user_default("Company") or frappe.get_all("Company", limit=1)[0]["name"],
             })
-            if fix["payroll_cc"] and frappe.get_meta("Salary Structure Assignment").has_field("payroll_cost_center"):
-                new.payroll_cost_center = fix["payroll_cc"]
             new.insert(ignore_permissions=True)
             new.submit()
             fixed += 1
