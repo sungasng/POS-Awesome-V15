@@ -60,22 +60,22 @@ OTHER_PAYABLES_PARENT = "6200 - Other Payables - SCL"
 
 NEW_ACCOUNTS = [
     {
-        "account_name": "6208 - HMO - Payable",
-        "account_number": "6208",
+        "account_name": "6215 - HMO - Payable",
+        "account_number": "6215",
         "account_type": "Payable",
         "root_type": "Liability",
         "parent": OTHER_PAYABLES_PARENT,
     },
     {
-        "account_name": "6213 - Cooperative Loan - Payable",
-        "account_number": "6213",
+        "account_name": "6216 - Cooperative Loan - Payable",
+        "account_number": "6216",
         "account_type": "Payable",
         "root_type": "Liability",
         "parent": OTHER_PAYABLES_PARENT,
     },
     {
-        "account_name": "6214 - Cooperative Contribution - Payable",
-        "account_number": "6214",
+        "account_name": "6218 - Cooperative Contribution - Payable",
+        "account_number": "6218",
         "account_type": "Payable",
         "root_type": "Liability",
         "parent": OTHER_PAYABLES_PARENT,
@@ -115,10 +115,10 @@ COMPONENT_ACCOUNT_MAP = {
     "Pension Employee":           "6211 - Pension - Payable - SCL",
     "Pension Employer":           "6211 - Pension - Payable - SCL",
     "PAYE":                       "6212 - PAYE - Payable - SCL",
-    "HMO Top-up (Staff Paid)":    "6208 - HMO - Payable - SCL",
+    "HMO Top-up (Staff Paid)":    "6215 - HMO - Payable - SCL",
     "Loan Repayment":             "1701 - Staff Loan Receivable - SCL",
-    "COOP Loan Repayment":        "6213 - Cooperative Loan - Payable - SCL",
-    "Cooperative Contribution":   "6214 - Cooperative Contribution - Payable - SCL",
+    "COOP Loan Repayment":        "6216 - Cooperative Loan - Payable - SCL",
+    "Cooperative Contribution":   "6218 - Cooperative Contribution - Payable - SCL",
 }
 
 # Expense-side override for "statistical employer cost" deductions. These need to
@@ -171,6 +171,20 @@ def upsert_account(spec: dict, report: list[str]) -> str | None:
     if frappe.db.exists("Account", expected_name):
         report.append(f"  = `{expected_name}` already exists")
         return expected_name
+    # Also check by account_number to catch numbering collisions
+    if spec.get("account_number"):
+        existing = frappe.get_all(
+            "Account",
+            filters={"account_number": spec["account_number"], "company": COMPANY},
+            fields=["name"],
+            limit=1,
+        )
+        if existing:
+            report.append(
+                f"  ! account_number {spec['account_number']} already taken by "
+                f"`{existing[0]['name']}` -- SKIP. Update COMPONENT_ACCOUNT_MAP to point there."
+            )
+            return None
     if DRY_RUN:
         report.append(f"  + would-insert `{expected_name}` under `{spec['parent']}`")
         return expected_name
