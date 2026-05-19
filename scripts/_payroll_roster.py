@@ -1,5 +1,5 @@
-# Auto-generated from STAFF PAYROLL FOR APRIL 2026.xls — DO NOT edit manually.
-# 219 employees across 19 outlets.
+# Auto-generated from STAFF PAYROLL FOR APRIL 2026.xls -- DO NOT edit manually.
+# 217 employees across 19 outlets.
 PAYROLL_APR_2026 = [
   {
     "outlet": "HEADQUATERS",
@@ -258,13 +258,6 @@ PAYROLL_APR_2026 = [
     "name": "OLUFUWAPE REUBEN",
     "position": "Operations support",
     "gross": 223000.0,
-    "pay_mode": "Bank"
-  },
-  {
-    "outlet": "HEADQUATERS",
-    "name": "PAYROLL ADDITION",
-    "position": "OLUFUWAPE REUBEN",
-    "gross": NaN,
     "pay_mode": "Bank"
   },
   {
@@ -1217,13 +1210,6 @@ PAYROLL_APR_2026 = [
     "name": "BLESSING NGAWCHI",
     "position": "CLEANER",
     "gross": 4650.0,
-    "pay_mode": "Bank"
-  },
-  {
-    "outlet": "IDOWINA",
-    "name": "PAYROLL EXIT",
-    "position": "MONDAY KELLY",
-    "gross": NaN,
     "pay_mode": "Bank"
   },
   {
