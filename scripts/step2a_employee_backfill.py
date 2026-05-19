@@ -60,7 +60,7 @@ DEPT_ALIASES = {
 # Populated at runtime by seed_departments(): logical name -> ERP record name
 DEPT_NAME_MAP: dict[str, str] = {}
 
-EMPLOYMENT_TYPES = ["Freelance", "Contract", "Intern", "Temporary"]
+EMPLOYMENT_TYPES = ["Permanent", "Freelance", "Contract", "Intern", "Temporary"]
 
 DEPARTMENTS = [
     "Executive",
