@@ -32,21 +32,19 @@ import frappe
 
 DRY_RUN = True
 
-COMPANY            = "Sungas Company Limited"
+COMPANY            = "SUNGAS COMPANY LIMITED"
 DEFAULT_STRUCTURE  = "Sungas Standard"
 RENT_RELIEF_FLOOR  = 2_500_000   # so PAYE relief caps at 500,000
 
 # --- Existing records to verify ----------------------------------------------
-EXISTING = [
-    {"name": "HR-EMP-00326", "expected_name_contains": "DOMINION"},
-    {"name": "HR-EMP-00327", "expected_name_contains": "BULUS"},
-]
+# (HR thought these were on ERP but they aren't -- moved to NEW_HIRES below.)
+EXISTING: list[dict] = []
 
 # --- New hires to onboard ----------------------------------------------------
 # Fill every `None` below before flipping DRY_RUN=False.
 NEW_HIRES = [
     {
-        # ---- HR-supplied ----
+        # ---- HR-supplied (full) ----
         "first_name":      "Isaac",
         "last_name":       "Onwuzuluigbo",
         "employee_name":   "ISAAC ONWUZULUIGBO",
@@ -55,7 +53,6 @@ NEW_HIRES = [
         "ndlea_nin":       "96889401898",
         "bank_name":       "Sterling Bank",
         "bank_ac_no":      "942720863",
-        # ---- HR confirmation 2026-05 ----
         "gender":              "Male",
         "designation":         "Filler",
         "department":          "Operations - SCL",
@@ -63,10 +60,10 @@ NEW_HIRES = [
         "payroll_cost_center": "Okhuoromi",
         "grade_level":         "G7",
         "salary_base":         78078,
-        "eligible_for_13th_month": 0,   # < 12mo service at year-end; flip later if HR confirms
+        "eligible_for_13th_month": 0,
     },
     {
-        # ---- HR-supplied ----
+        # ---- HR-supplied (full) ----
         "first_name":      "Godwin",
         "last_name":       "Saviour",
         "employee_name":   "GODWIN SAVIOUR",
@@ -75,7 +72,6 @@ NEW_HIRES = [
         "ndlea_nin":       "26115119179",
         "bank_name":       "United Bank for Africa",
         "bank_ac_no":      "2314285751",
-        # ---- HR confirmation 2026-05 ----
         "gender":              "Male",
         "designation":         "Rider",
         "department":          "Logistics",
@@ -83,6 +79,46 @@ NEW_HIRES = [
         "payroll_cost_center": "Okhuoromi",
         "grade_level":         "G6",
         "salary_base":         105287,
+        "eligible_for_13th_month": 0,
+    },
+    {
+        # ---- Dominion Roland (HR thought he was HR-EMP-00326, he isn't) ----
+        "first_name":      "Dominion",
+        "last_name":       "Roland",
+        "employee_name":   "DOMINION ROLAND",
+        "designation":         "Cashier",
+        "department":          "Operations - SCL",
+        "branch":              "Okhuoromi",
+        "payroll_cost_center": "Okhuoromi",
+        "salary_base":         99372,
+        # ---- HR to confirm before LIVE ----
+        "date_of_birth":   None,
+        "date_of_joining": "2026-02-01",   # placeholder; HR confirms
+        "ndlea_nin":       None,
+        "bank_name":       None,
+        "bank_ac_no":      None,
+        "gender":              None,        # "Male" / "Female"
+        "grade_level":         None,        # G1-G7
+        "eligible_for_13th_month": 0,
+    },
+    {
+        # ---- Bulus Sati (HR thought he was HR-EMP-00327, he isn't) ----
+        "first_name":      "Bulus",
+        "last_name":       "Sati",
+        "employee_name":   "BULUS SATI",
+        "designation":         "Rider",
+        "department":          "Logistics",
+        "branch":              "Okhuoromi",
+        "payroll_cost_center": "Okhuoromi",
+        "salary_base":         105287,
+        # ---- HR to confirm before LIVE ----
+        "date_of_birth":   None,
+        "date_of_joining": "2026-02-01",
+        "ndlea_nin":       None,
+        "bank_name":       None,
+        "bank_ac_no":      None,
+        "gender":              None,
+        "grade_level":         None,
         "eligible_for_13th_month": 0,
     },
 ]
@@ -94,6 +130,78 @@ def _is_meta_field(doctype: str, fieldname: str) -> bool:
         return bool(frappe.get_meta(doctype).has_field(fieldname))
     except Exception:
         return False
+
+
+def _ensure_cost_center(name: str, report: list[str]) -> str | None:
+    """Resolve / create a Cost Center for `name` under the company root group.
+
+    Returns the canonical ERP name (with " - <abbr>" suffix) or None.
+    """
+    if frappe.db.exists("Cost Center", name):
+        return name
+    # Try with the SCL company suffix
+    candidate = f"{name} - SCL"
+    if frappe.db.exists("Cost Center", candidate):
+        return candidate
+    # Try by display name
+    by_name = frappe.db.get_value("Cost Center", {"cost_center_name": name, "company": COMPANY}, "name")
+    if by_name:
+        return by_name
+    if DRY_RUN:
+        report.append(f"  + would-create Cost Center `{name}` under company root")
+        return candidate  # speculative
+    parent = frappe.db.get_value("Cost Center", {"company": COMPANY, "is_group": 1, "parent_cost_center": ["in", ["", None]]}, "name") \
+        or frappe.db.get_value("Cost Center", {"company": COMPANY, "is_group": 1}, "name")
+    doc = frappe.get_doc({
+        "doctype": "Cost Center",
+        "cost_center_name": name,
+        "company": COMPANY,
+        "parent_cost_center": parent,
+        "is_group": 0,
+    }).insert(ignore_permissions=True)
+    report.append(f"  + created Cost Center `{doc.name}` (parent={parent})")
+    return doc.name
+
+
+def _ensure_department(name: str, report: list[str]) -> str | None:
+    if frappe.db.exists("Department", name):
+        return name
+    candidate = f"{name} - SCL"
+    if frappe.db.exists("Department", candidate):
+        return candidate
+    by_name = frappe.db.get_value("Department", {"department_name": name}, "name")
+    if by_name:
+        return by_name
+    if DRY_RUN:
+        report.append(f"  + would-create Department `{name}` under 'All Departments'")
+        return candidate
+    doc = frappe.get_doc({
+        "doctype": "Department",
+        "department_name": name,
+        "company": COMPANY,
+        "parent_department": "All Departments" if frappe.db.exists("Department", "All Departments") else None,
+    }).insert(ignore_permissions=True)
+    report.append(f"  + created Department `{doc.name}`")
+    return doc.name
+
+
+def ensure_masters(report: list[str]) -> None:
+    """Walk NEW_HIRES, auto-create missing CC + Department records,
+    and rewrite hire dict with the canonical ERP IDs."""
+    report.append("## 2a. Master records (auto-create if missing)")
+    report.append("")
+    for hire in NEW_HIRES:
+        cc = hire.get("payroll_cost_center")
+        if cc:
+            resolved = _ensure_cost_center(cc, report)
+            if resolved and resolved != cc:
+                hire["payroll_cost_center"] = resolved
+        dept = hire.get("department")
+        if dept:
+            resolved = _ensure_department(dept, report)
+            if resolved and resolved != dept:
+                hire["department"] = resolved
+    report.append("")
 
 
 def verify_existing(report: list[str]) -> int:
@@ -265,6 +373,8 @@ def main():
     report.append("")
 
     issues = verify_existing(report)
+
+    ensure_masters(report)
 
     report.append("## 2. New hires (onboard)")
     report.append("")
