@@ -186,6 +186,44 @@ def main():
     # Reload from DB so all defaults / autoset fields are populated
     pe = frappe.get_doc("Payroll Entry", pe.name)
 
+    # ---- SSA payroll_payable_account audit + auto-repair ------------------
+    # v15 Salary Slip.set_salary_structure_assignment() filters SSAs by
+    # payroll_payable_account. If any active SSA in the window points at a
+    # stale account, slip.insert() throws "Please assign a Salary Structure".
+    # Auto-repair by stamping every active SSA in the window to pe.payroll_payable_account.
+    stale_ssas = frappe.db.sql("""
+        select ssa.name, ssa.employee, ssa.payroll_payable_account
+        from `tabSalary Structure Assignment` ssa
+        join `tabEmployee` e on e.name = ssa.employee
+        where ssa.docstatus = 1
+          and e.status = 'Active'
+          and e.company = %s
+          and ssa.from_date <= %s
+          and (ssa.payroll_payable_account is null
+               or ssa.payroll_payable_account = ''
+               or ssa.payroll_payable_account != %s)
+    """, (pe.company, pe.end_date, pe.payroll_payable_account), as_dict=True)
+
+    if stale_ssas:
+        report.append("")
+        report.append(f"## SSA payable-account audit: {len(stale_ssas)} stale -- auto-repairing")
+        distinct_old = {(s.get("payroll_payable_account") or "<empty>") for s in stale_ssas}
+        report.append(f"  Old accounts seen : {sorted(distinct_old)}")
+        report.append(f"  New account       : {pe.payroll_payable_account}")
+        print(f"  ~ SSA audit: {len(stale_ssas)} stale, auto-repairing -> {pe.payroll_payable_account}")
+        for s in stale_ssas:
+            frappe.db.set_value(
+                "Salary Structure Assignment", s["name"],
+                "payroll_payable_account", pe.payroll_payable_account,
+                update_modified=False,
+            )
+        frappe.db.commit()
+        report.append(f"  + {len(stale_ssas)} SSAs updated")
+    else:
+        report.append("")
+        report.append("## SSA payable-account audit: all clean")
+        print("  = SSA audit: all clean")
+
     # Fill employee table -- try HRMS helper first; fall back to direct SQL.
     try:
         pe.fill_employee_details()
@@ -236,41 +274,36 @@ def main():
         report.append(f"  + employees attached (direct SQL): {attached}")
         print(f"  + employees attached (direct SQL): {attached}")
 
-    # Create Salary Slips in draft -- build directly via Salary Slip doctype
-    # (bypasses HRMS make_salary_slip() which has a buggy SSA lookup in v15).
+    # Create Salary Slips in draft -- mirror HRMS's own create_salary_slips_for_employees
+    # We let HRMS resolve `salary_structure` from the SSA (do NOT pre-set it on the slip)
+    # and we MUST pass `payroll_payable_account` so set_salary_structure_assignment() matches.
     if CREATE_SLIPS:
-        print("  ~ Creating Salary Slips directly (bypassing make_salary_slip)...")
+        print("  ~ Creating Salary Slips (mirroring HRMS internal helper)...")
         created = 0
         failed: list[tuple[str, str]] = []
-        ssa_map = {
-            r["employee"]: r["salary_structure"]
-            for r in frappe.db.sql("""
-                select employee, salary_structure
-                from `tabSalary Structure Assignment`
-                where docstatus=1 and from_date<=%s and company=%s
-                order by from_date desc
-            """, (pe.end_date, pe.company), as_dict=True)
+        base_args = {
+            "doctype":                "Salary Slip",
+            "payroll_frequency":      pe.payroll_frequency,
+            "start_date":             pe.start_date,
+            "end_date":               pe.end_date,
+            "company":                pe.company,
+            "posting_date":           pe.posting_date,
+            "payroll_entry":          pe.name,
+            "exchange_rate":          float(pe.exchange_rate or 1),
+            "currency":               pe.currency,
+            "payroll_payable_account": pe.payroll_payable_account,
+            "deduct_tax_for_unsubmitted_tax_exemption_proof": 0,
+            "deduct_tax_for_unclaimed_employee_benefits":     0,
         }
         for emp_row in pe.employees:
-            structure = ssa_map.get(emp_row.employee)
-            if not structure:
-                failed.append((emp_row.employee, "no active SSA"))
-                continue
             try:
-                slip = frappe.new_doc("Salary Slip")
-                slip.employee          = emp_row.employee
-                slip.salary_structure  = structure
-                slip.payroll_entry     = pe.name
-                slip.start_date        = pe.start_date
-                slip.end_date          = pe.end_date
-                slip.posting_date      = pe.posting_date
-                slip.payroll_frequency = pe.payroll_frequency
-                slip.company           = pe.company
-                slip.currency          = pe.currency
+                args = dict(base_args)
+                args["employee"] = emp_row.employee
+                slip = frappe.get_doc(args)
                 slip.insert(ignore_permissions=True)
                 created += 1
             except Exception as e:
-                failed.append((emp_row.employee, str(e)[:140]))
+                failed.append((emp_row.employee, str(e)[:200]))
         frappe.db.commit()
         slip_count = frappe.db.count("Salary Slip", {"payroll_entry": pe.name})
         report.append(f"  + Salary Slips created: {created} | failed: {len(failed)}")
