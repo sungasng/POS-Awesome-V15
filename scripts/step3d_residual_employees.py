@@ -55,15 +55,15 @@ NEW_HIRES = [
         "ndlea_nin":       "96889401898",
         "bank_name":       "Sterling Bank",
         "bank_ac_no":      "942720863",
-        # ---- Pending (fill before LIVE) ----
-        "gender":              None,   # "Male" / "Female"
-        "designation":         None,   # e.g. "Cashier", "Pump Attendant"
-        "department":          None,   # e.g. "Operations - SCL"
-        "branch":              None,   # e.g. "Eleme", "Headquarters"
-        "payroll_cost_center": None,   # e.g. "Eleme - SCL"
-        "grade_level":         None,   # G1 / G2 / G3-G7
-        "salary_base":         None,   # NGN monthly base for SSA
-        "eligible_for_13th_month": 0,  # set 1 only if HR confirms
+        # ---- HR confirmation 2026-05 ----
+        "gender":              "Male",
+        "designation":         "Filler",
+        "department":          "Operations - SCL",
+        "branch":              "Okhuoromi",
+        "payroll_cost_center": "Okhuoromi",
+        "grade_level":         "G7",
+        "salary_base":         78078,
+        "eligible_for_13th_month": 0,   # < 12mo service at year-end; flip later if HR confirms
     },
     {
         # ---- HR-supplied ----
@@ -75,14 +75,14 @@ NEW_HIRES = [
         "ndlea_nin":       "26115119179",
         "bank_name":       "United Bank for Africa",
         "bank_ac_no":      "2314285751",
-        # ---- Pending (fill before LIVE) ----
-        "gender":              None,
-        "designation":         None,
-        "department":          None,
-        "branch":              None,
-        "payroll_cost_center": None,
-        "grade_level":         None,
-        "salary_base":         None,
+        # ---- HR confirmation 2026-05 ----
+        "gender":              "Male",
+        "designation":         "Rider",
+        "department":          "Logistics",
+        "branch":              "Okhuoromi",
+        "payroll_cost_center": "Okhuoromi",
+        "grade_level":         "G6",
+        "salary_base":         105287,
         "eligible_for_13th_month": 0,
     },
 ]
@@ -150,6 +150,30 @@ def find_pending_fields(hire: dict) -> list[str]:
     return [f for f in required if hire.get(f) is None]
 
 
+def find_missing_masters(hire: dict) -> list[str]:
+    """Return a human-readable list of master records that don't exist."""
+    missing = []
+    if hire.get("branch") and not frappe.db.exists("Branch", hire["branch"]):
+        missing.append(f"Branch `{hire['branch']}`")
+    if hire.get("department") and not frappe.db.exists("Department", hire["department"]):
+        # ERPNext sometimes suffixes department with " - <abbr>"
+        if not frappe.db.exists("Department", {"department_name": hire["department"]}):
+            missing.append(f"Department `{hire['department']}`")
+    if hire.get("payroll_cost_center") and not frappe.db.exists("Cost Center", hire["payroll_cost_center"]):
+        # try with company suffix
+        for guess in (f"{hire['payroll_cost_center']} - SCL",):
+            if frappe.db.exists("Cost Center", guess):
+                hire["payroll_cost_center"] = guess  # auto-correct
+                break
+        else:
+            missing.append(f"Cost Center `{hire['payroll_cost_center']}` (or `... - SCL`)")
+    if hire.get("designation") and not frappe.db.exists("Designation", hire["designation"]):
+        missing.append(f"Designation `{hire['designation']}`")
+    if hire.get("bank_name") and not frappe.db.exists("Bank", hire["bank_name"]):
+        missing.append(f"Bank `{hire['bank_name']}`")
+    return missing
+
+
 def upsert_new_hire(hire: dict, report: list[str]) -> str | None:
     """Insert Employee + active SSA. Returns the Employee.name or None."""
     name_query = frappe.db.get_value(
@@ -165,6 +189,14 @@ def upsert_new_hire(hire: dict, report: list[str]) -> str | None:
     if pending:
         report.append(f"  ! `{hire['employee_name']}` -- missing: {', '.join(pending)}")
         report.append("     (fill these in NEW_HIRES list, then re-run)")
+        return None
+
+    missing_masters = find_missing_masters(hire)
+    if missing_masters:
+        report.append(f"  ! `{hire['employee_name']}` -- master records missing on ERP:")
+        for m in missing_masters:
+            report.append(f"      - {m}")
+        report.append("     (HR must create these masters first OR correct the value in NEW_HIRES)")
         return None
 
     if DRY_RUN:
