@@ -217,11 +217,16 @@ def assign_leave_policies(period: str | None, policies: dict[str, str], report: 
 
     by_policy: dict[str, int] = {}
     skipped = 0
+    skipped_no_grade = 0
     created = 0
     errors = []
 
     for emp in employees:
-        grade = emp.get("grade_level") or "G6"
+        grade = emp.get("grade_level")
+        if not grade:
+            # Service providers (vigilantes, freelance, etc.) -- skip entirely
+            skipped_no_grade += 1
+            continue
         policy_name = GRADE_TO_POLICY.get(grade)
         if not policy_name:
             skipped += 1
@@ -262,7 +267,8 @@ def assign_leave_policies(period: str | None, policies: dict[str, str], report: 
 
     report.append(f"  Active employees: {len(employees)}")
     report.append(f"  Assignments {'projected' if DRY_RUN else 'created+submitted'}: {created}")
-    report.append(f"  Skipped (no grade): {skipped}")
+    report.append(f"  Skipped (no grade -- service providers): {skipped_no_grade}")
+    report.append(f"  Skipped (unknown grade): {skipped}")
     report.append(f"  Errors: {len(errors)}")
     report.append("")
     report.append("  Distribution by policy:")

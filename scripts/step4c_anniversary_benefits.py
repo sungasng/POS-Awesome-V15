@@ -39,19 +39,23 @@ DRY_RUN = False
 STRUCTURE_NAME = "Sungas Standard"
 
 
-# Leave Allowance: 10% of annual basic, paid in anniversary month, after 12 months service
+# Leave Allowance: 10% of annual basic, paid in anniversary month, after 12 months service.
+# Only fires for staff with a grade_level set (G1-G7) -- service providers excluded.
 LV_ALW_FORMULA = (
     "(0.10 * BS * 12) "
-    "if (employee.date_of_joining "
+    "if (employee.grade_level "
+    "and employee.date_of_joining "
     "and getdate(start_date).month == getdate(employee.date_of_joining).month "
     "and date_diff(start_date, employee.date_of_joining) >= 365) "
     "else 0"
 )
 
-# 13th Month: 1x basic in December, after 12 months service, hired before Aug 1
+# 13th Month: 1x basic in December, after 12 months service, hired before Aug 1.
+# Gated by grade_level (excludes service providers) AND eligible_for_13th_month toggle.
 TH_MO_FORMULA = (
     "BS "
     "if (employee.eligible_for_13th_month "
+    "and employee.grade_level "
     "and getdate(start_date).month == 12 "
     "and employee.date_of_joining "
     "and date_diff(start_date, employee.date_of_joining) >= 365 "
