@@ -87,9 +87,11 @@ BANK_ALIASES: dict[str, str] = {
     "lotus bank":              "Lotus Bank",
     "jaiz":                    "JAIZ Bank",
     "jaiz bank":               "JAIZ Bank",
-    # Unmapped -- step6a does not seed these. Will be flagged in skip CSV.
-    # "opay":                    "OPAY",          # PSB / fintech
-    # "parallex bank":           "Parallex Bank", # commercial; not in seed list
+    "opay":                    "OPAY",
+    "paycom":                  "OPAY",
+    "paycom (opay)":           "OPAY",
+    "parallex":                "Parallex Bank",
+    "parallex bank":           "Parallex Bank",
 }
 
 
