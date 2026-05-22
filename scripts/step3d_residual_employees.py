@@ -91,14 +91,15 @@ NEW_HIRES = [
         "branch":              "Okhuoromi",
         "payroll_cost_center": "Okhuoromi",
         "salary_base":         99372,
-        # ---- HR to confirm before LIVE ----
+        # ---- HR confirmation 2026-05 ----
+        "gender":              "Male",
+        "grade_level":         "G7",
+        "bank_name":           "Access Bank",
+        "bank_ac_no":          "1947919792",
+        # ---- Optional / pending HR ----
         "date_of_birth":   None,
         "date_of_joining": "2026-02-01",   # placeholder; HR confirms
         "ndlea_nin":       None,
-        "bank_name":       None,
-        "bank_ac_no":      None,
-        "gender":              None,        # "Male" / "Female"
-        "grade_level":         None,        # G1-G7
         "eligible_for_13th_month": 0,
     },
     {
@@ -111,14 +112,15 @@ NEW_HIRES = [
         "branch":              "Okhuoromi",
         "payroll_cost_center": "Okhuoromi",
         "salary_base":         105287,
-        # ---- HR to confirm before LIVE ----
+        # ---- HR confirmation 2026-05 ----
+        "gender":              "Male",
+        "grade_level":         "G6",
+        "bank_name":           "United Bank for Africa",
+        "bank_ac_no":          "2311657009",
+        # ---- Optional / pending HR ----
         "date_of_birth":   None,
         "date_of_joining": "2026-02-01",
         "ndlea_nin":       None,
-        "bank_name":       None,
-        "bank_ac_no":      None,
-        "gender":              None,
-        "grade_level":         None,
         "eligible_for_13th_month": 0,
     },
 ]
@@ -132,38 +134,42 @@ def _is_meta_field(doctype: str, fieldname: str) -> bool:
         return False
 
 
-def _ensure_cost_center(name: str, report: list[str]) -> str | None:
-    """Resolve / create a Cost Center for `name` under the company root group.
+def _resolve_cost_center(name: str, report: list[str]) -> str | None:
+    """Look up an existing Cost Center matching `name` (no auto-create).
 
-    Returns the canonical ERP name (with " - <abbr>" suffix) or None.
+    Tries exact match, then `<name> - SCL`, then a fuzzy LIKE search on both
+    `name` and `cost_center_name`. Returns the canonical ERP name or None
+    if nothing matches.
     """
     if frappe.db.exists("Cost Center", name):
         return name
-    # Try with the SCL company suffix
     candidate = f"{name} - SCL"
     if frappe.db.exists("Cost Center", candidate):
         return candidate
-    # Try by display name
     by_name = frappe.db.get_value("Cost Center", {"cost_center_name": name, "company": COMPANY}, "name")
     if by_name:
         return by_name
-    if DRY_RUN:
-        report.append(f"  + would-create Cost Center `{name}` under company root")
-        return candidate  # speculative
-    parent = frappe.db.get_value("Cost Center", {"company": COMPANY, "is_group": 1, "parent_cost_center": ["in", ["", None]]}, "name") \
-        or frappe.db.get_value("Cost Center", {"company": COMPANY, "is_group": 1}, "name")
-    doc = frappe.get_doc({
-        "doctype": "Cost Center",
-        "cost_center_name": name,
-        "company": COMPANY,
-        "parent_cost_center": parent,
-        "is_group": 0,
-    }).insert(ignore_permissions=True)
-    report.append(f"  + created Cost Center `{doc.name}` (parent={parent})")
-    return doc.name
+    # Fuzzy LIKE search
+    matches = frappe.db.sql("""
+        select name
+        from `tabCost Center`
+        where company = %s
+          and is_group = 0
+          and disabled = 0
+          and (name like %s or cost_center_name like %s)
+        order by name
+    """, (COMPANY, f"%{name}%", f"%{name}%"), as_dict=True)
+    if len(matches) == 1:
+        report.append(f"  ~ resolved Cost Center `{name}` -> `{matches[0]['name']}` (fuzzy match)")
+        return matches[0]["name"]
+    if len(matches) > 1:
+        names = ", ".join(m["name"] for m in matches[:6])
+        report.append(f"  ! Cost Center `{name}` ambiguous -- matched: {names}")
+        report.append("     Edit NEW_HIRES to use the exact ERP name from that list.")
+    return None
 
 
-def _ensure_department(name: str, report: list[str]) -> str | None:
+def _resolve_department(name: str, report: list[str]) -> str | None:
     if frappe.db.exists("Department", name):
         return name
     candidate = f"{name} - SCL"
@@ -172,35 +178,43 @@ def _ensure_department(name: str, report: list[str]) -> str | None:
     by_name = frappe.db.get_value("Department", {"department_name": name}, "name")
     if by_name:
         return by_name
-    if DRY_RUN:
-        report.append(f"  + would-create Department `{name}` under 'All Departments'")
-        return candidate
-    doc = frappe.get_doc({
-        "doctype": "Department",
-        "department_name": name,
-        "company": COMPANY,
-        "parent_department": "All Departments" if frappe.db.exists("Department", "All Departments") else None,
-    }).insert(ignore_permissions=True)
-    report.append(f"  + created Department `{doc.name}`")
-    return doc.name
+    matches = frappe.db.sql("""
+        select name
+        from `tabDepartment`
+        where disabled = 0
+          and (name like %s or department_name like %s)
+        order by name
+    """, (f"%{name}%", f"%{name}%"), as_dict=True)
+    if len(matches) == 1:
+        report.append(f"  ~ resolved Department `{name}` -> `{matches[0]['name']}` (fuzzy match)")
+        return matches[0]["name"]
+    if len(matches) > 1:
+        names = ", ".join(m["name"] for m in matches[:6])
+        report.append(f"  ! Department `{name}` ambiguous -- matched: {names}")
+        report.append("     Edit NEW_HIRES to use the exact ERP name from that list.")
+    return None
 
 
 def ensure_masters(report: list[str]) -> None:
-    """Walk NEW_HIRES, auto-create missing CC + Department records,
-    and rewrite hire dict with the canonical ERP IDs."""
-    report.append("## 2a. Master records (auto-create if missing)")
+    """Walk NEW_HIRES, resolve CC + Department references against ERP.
+    Does NOT auto-create masters -- only renames hire dict to canonical IDs."""
+    report.append("## 2a. Master records (resolve, no auto-create)")
     report.append("")
     for hire in NEW_HIRES:
         cc = hire.get("payroll_cost_center")
         if cc:
-            resolved = _ensure_cost_center(cc, report)
+            resolved = _resolve_cost_center(cc, report)
             if resolved and resolved != cc:
                 hire["payroll_cost_center"] = resolved
+            elif resolved is None:
+                report.append(f"  ! `{hire['employee_name']}` -- Cost Center `{cc}` not found")
         dept = hire.get("department")
         if dept:
-            resolved = _ensure_department(dept, report)
+            resolved = _resolve_department(dept, report)
             if resolved and resolved != dept:
                 hire["department"] = resolved
+            elif resolved is None:
+                report.append(f"  ! `{hire['employee_name']}` -- Department `{dept}` not found")
     report.append("")
 
 
@@ -313,12 +327,12 @@ def upsert_new_hire(hire: dict, report: list[str]) -> str | None:
         return None
 
     # Build Employee doc
-    doc = frappe.get_doc({
+    # Build Employee doc (skip None-valued optional fields so Frappe doesn't reject them)
+    doc_data = {
         "doctype": "Employee",
         "first_name": hire["first_name"],
         "last_name":  hire["last_name"],
         "employee_name": hire["employee_name"],
-        "date_of_birth":   hire["date_of_birth"],
         "date_of_joining": hire["date_of_joining"],
         "gender":          hire["gender"],
         "status":          "Active",
@@ -326,9 +340,11 @@ def upsert_new_hire(hire: dict, report: list[str]) -> str | None:
         "designation":     hire["designation"],
         "department":      hire["department"],
         "branch":          hire["branch"],
-        "bank_name":       hire["bank_name"],
-        "bank_ac_no":      hire["bank_ac_no"],
-    })
+    }
+    for opt in ("date_of_birth", "bank_name", "bank_ac_no"):
+        if hire.get(opt):
+            doc_data[opt] = hire[opt]
+    doc = frappe.get_doc(doc_data)
     # Custom fields (only if present in this site's schema)
     if _is_meta_field("Employee", "payroll_cost_center"):
         doc.payroll_cost_center = hire["payroll_cost_center"]
@@ -338,7 +354,7 @@ def upsert_new_hire(hire: dict, report: list[str]) -> str | None:
         doc.rent_paid_annually = RENT_RELIEF_FLOOR
     if _is_meta_field("Employee", "eligible_for_13th_month"):
         doc.eligible_for_13th_month = int(hire.get("eligible_for_13th_month") or 0)
-    if _is_meta_field("Employee", "ndlea_nin"):
+    if _is_meta_field("Employee", "ndlea_nin") and hire.get("ndlea_nin"):
         doc.ndlea_nin = hire["ndlea_nin"]
 
     doc.insert(ignore_permissions=True)
