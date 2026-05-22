@@ -32,30 +32,41 @@ PAYROLL_PAYABLE_NAME     = "Salary Payable"   # account_name to seek/create
 
 
 def find_existing_payable() -> str | None:
-    candidates = ["Salary Payable", "Payroll Payable", "Payable Salary"]
+    """Search the imported CoA for an existing Payroll Payable account.
+
+    Tries account_name match first across common synonyms, then falls back
+    to fuzzy LIKE on every Liability leaf account whose name suggests
+    salary/payroll. Returns the first single non-disabled match, or None.
+    """
+    candidates = ["Salary Payable", "Payroll Payable", "Payable Salary",
+                  "Salary Control Account", "Salaries Payable"]
     for c in candidates:
-        # Direct match by .name
         n = frappe.db.get_value(
             "Account",
-            {"company": COMPANY, "account_name": c, "is_group": 0},
+            {"company": COMPANY, "account_name": c, "is_group": 0, "disabled": 0},
             "name",
         )
         if n:
             return n
-    return None
-
-
-def find_parent_payable_group() -> str | None:
-    """Find a sensible parent group account to nest 'Salary Payable' under."""
-    # Prefer "Accounts Payable" group, else any Payable group
-    for filt in (
-        {"company": COMPANY, "account_name": "Accounts Payable", "is_group": 1},
-        {"company": COMPANY, "account_type": "Payable", "is_group": 1},
-        {"company": COMPANY, "root_type": "Liability", "is_group": 1},
-    ):
-        n = frappe.db.get_value("Account", filt, "name")
-        if n:
-            return n
+    # Fuzzy search across any Liability leaf
+    rows = frappe.db.sql("""
+        select name
+        from `tabAccount`
+        where company = %s
+          and is_group = 0
+          and disabled = 0
+          and root_type = 'Liability'
+          and (
+                 name like '%%Salary%%'
+              or name like '%%Payroll%%'
+              or account_name like '%%Salary%%'
+              or account_name like '%%Payroll%%'
+          )
+        order by name
+        limit 1
+    """, (COMPANY,), as_dict=True)
+    if rows:
+        return rows[0]["name"]
     return None
 
 
@@ -106,29 +117,16 @@ def main():
         acct = find_existing_payable()
         if acct:
             report.append(f"  = found existing payable account: `{acct}`")
-        else:
-            parent = find_parent_payable_group()
-            if not parent:
-                report.append("  ! Could not find a parent payable group account; aborting payable-creation step")
-            elif DRY_RUN:
-                report.append(f"  + would-create `{PAYROLL_PAYABLE_NAME}` under parent `{parent}`")
+            if DRY_RUN:
+                report.append(f"  + would-set Company.default_payroll_payable_account = `{acct}`")
             else:
-                acct_doc = frappe.get_doc({
-                    "doctype": "Account",
-                    "account_name": PAYROLL_PAYABLE_NAME,
-                    "company": COMPANY,
-                    "parent_account": parent,
-                    "account_type": "Payable",
-                    "is_group": 0,
-                    "root_type": "Liability",
-                }).insert(ignore_permissions=True)
-                acct = acct_doc.name
-                report.append(f"  + created Account `{acct}` (account_type=Payable)")
-        if acct and not DRY_RUN:
-            frappe.db.set_value("Company", COMPANY, "default_payroll_payable_account", acct)
-            report.append(f"  + Company.default_payroll_payable_account = `{acct}`")
-        elif acct and DRY_RUN:
-            report.append(f"  + would-set Company.default_payroll_payable_account = `{acct}`")
+                frappe.db.set_value("Company", COMPANY, "default_payroll_payable_account", acct)
+                report.append(f"  + Company.default_payroll_payable_account = `{acct}`")
+        else:
+            report.append("  ! NO existing payable account named Salary/Payroll/Wage found.")
+            report.append("    Run `step6c_audit_payable_candidates.py` to list candidates,")
+            report.append("    then `step6c_swap_payable.py` to wire the canonical CoA account.")
+            report.append("    (This script will NOT auto-create new GL accounts.)")
     report.append("")
 
     if not DRY_RUN:
