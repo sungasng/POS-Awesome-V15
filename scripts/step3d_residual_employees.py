@@ -82,7 +82,7 @@ NEW_HIRES = [
         "eligible_for_13th_month": 0,
     },
     {
-        # ---- Dominion Roland (HR thought he was HR-EMP-00326, he isn't) ----
+        # ---- Dominion Roland ----
         "first_name":      "Dominion",
         "last_name":       "Roland",
         "employee_name":   "DOMINION ROLAND",
@@ -91,19 +91,17 @@ NEW_HIRES = [
         "branch":              "Okhuoromi",
         "payroll_cost_center": "Okhuoromi",
         "salary_base":         99372,
-        # ---- HR confirmation 2026-05 ----
         "gender":              "Male",
         "grade_level":         "G7",
         "bank_name":           "Access Bank",
         "bank_ac_no":          "1947919792",
-        # ---- Optional / pending HR ----
-        "date_of_birth":   None,
-        "date_of_joining": "2026-02-01",   # placeholder; HR confirms
+        "date_of_birth":   None,             # placeholder -- step3d defaults to 1990-01-01
+        "date_of_joining": "2026-02-01",
         "ndlea_nin":       None,
         "eligible_for_13th_month": 0,
     },
     {
-        # ---- Bulus Sati (HR thought he was HR-EMP-00327, he isn't) ----
+        # ---- Bulus Sati ----
         "first_name":      "Bulus",
         "last_name":       "Sati",
         "employee_name":   "BULUS SATI",
@@ -112,12 +110,10 @@ NEW_HIRES = [
         "branch":              "Okhuoromi",
         "payroll_cost_center": "Okhuoromi",
         "salary_base":         105287,
-        # ---- HR confirmation 2026-05 ----
         "gender":              "Male",
         "grade_level":         "G6",
         "bank_name":           "United Bank for Africa",
         "bank_ac_no":          "2311657009",
-        # ---- Optional / pending HR ----
         "date_of_birth":   None,
         "date_of_joining": "2026-02-01",
         "ndlea_nin":       None,
@@ -328,11 +324,18 @@ def upsert_new_hire(hire: dict, report: list[str]) -> str | None:
 
     # Build Employee doc
     # Build Employee doc (skip None-valued optional fields so Frappe doesn't reject them)
+    # ERPNext Employee.date_of_birth is mandatory; default to 1990-01-01 if HR hasn't supplied it.
+    DEFAULT_DOB = "1990-01-01"
+    dob = hire.get("date_of_birth") or DEFAULT_DOB
+    if not hire.get("date_of_birth"):
+        report.append(f"  ~ `{hire['employee_name']}` -- using placeholder DOB {DEFAULT_DOB} "
+                      "(HR must update with real DOB)")
     doc_data = {
         "doctype": "Employee",
         "first_name": hire["first_name"],
         "last_name":  hire["last_name"],
         "employee_name": hire["employee_name"],
+        "date_of_birth":   dob,
         "date_of_joining": hire["date_of_joining"],
         "gender":          hire["gender"],
         "status":          "Active",
@@ -341,7 +344,7 @@ def upsert_new_hire(hire: dict, report: list[str]) -> str | None:
         "department":      hire["department"],
         "branch":          hire["branch"],
     }
-    for opt in ("date_of_birth", "bank_name", "bank_ac_no"):
+    for opt in ("bank_name", "bank_ac_no"):
         if hire.get(opt):
             doc_data[opt] = hire[opt]
     doc = frappe.get_doc(doc_data)

@@ -110,6 +110,12 @@ def name_tokens(name: str) -> frozenset[str]:
     return frozenset(t for t in cleaned.split() if len(t) > 1)
 
 
+# Explicit name aliases for HR-file rows whose spelling diverges from ERP records.
+NAME_ALIASES: dict[str, str] = {
+    "IGBINOVA VICTOR": "Victor Igbinoba",   # HR-EMP-00146
+}
+
+
 # ---------- HR-supplied bank list ----------
 BANK_ROWS = [
     ("AHMED YAKUBU",                    "Union Bank",      "0057240551"),
@@ -347,25 +353,38 @@ def main():
     canonical_bank_misses: list[tuple[str, str]] = []  # (raw_bank, alias_lookup)
 
     for staff_name, bank_raw, acct_no in BANK_ROWS:
+        # Apply explicit alias if present (handles spelling drift like Igbinova vs Igbinoba)
+        alias_target = NAME_ALIASES.get(staff_name)
+        candidates: list[dict] = []
+        if alias_target:
+            emp_row = frappe.db.get_value(
+                "Employee",
+                {"employee_name": alias_target, "status": "Active"},
+                ["name", "employee_name", "bank_name", "bank_ac_no"],
+                as_dict=True,
+            )
+            if emp_row:
+                candidates = [emp_row]
+
         # Token-set match on employee name. Try exact, then strict subset, then loose intersection.
         toks = name_tokens(staff_name)
-        candidates: list[dict] = []
-        # Exact token match
-        if toks in by_token:
-            candidates = by_token[toks]
-        else:
-            # Strict: every token in HR set is present in employee tokens
-            for emp_toks, emps in by_token.items():
-                if toks <= emp_toks:
-                    candidates.extend(emps)
-            if not candidates:
-                # Loose: at least 2-token intersection (handles middle-name drops)
+        if not candidates:
+            # Exact token match
+            if toks in by_token:
+                candidates = by_token[toks]
+            else:
+                # Strict: every token in HR set is present in employee tokens
                 for emp_toks, emps in by_token.items():
-                    if len(toks & emp_toks) >= 2 and len(toks) >= 2 and len(emp_toks) >= 2:
-                        # Bonus: require either first or last token to match for safety
-                        if (next(iter(sorted(toks))) in emp_toks
-                                or next(iter(sorted(toks, reverse=True))) in emp_toks):
-                            candidates.extend(emps)
+                    if toks <= emp_toks:
+                        candidates.extend(emps)
+                if not candidates:
+                    # Loose: at least 2-token intersection (handles middle-name drops)
+                    for emp_toks, emps in by_token.items():
+                        if len(toks & emp_toks) >= 2 and len(toks) >= 2 and len(emp_toks) >= 2:
+                            # Bonus: require either first or last token to match for safety
+                            if (next(iter(sorted(toks))) in emp_toks
+                                    or next(iter(sorted(toks, reverse=True))) in emp_toks):
+                                candidates.extend(emps)
 
         # Dedupe by Employee.name
         seen = set()
