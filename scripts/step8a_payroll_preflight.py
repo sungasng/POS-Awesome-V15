@@ -217,52 +217,93 @@ def section_cost_centres(report: list[str], ssas: list[dict]) -> dict:
 
 
 # ---------- 6+7. Earnings + PAYE projection ----------
-def evaluate_structure_components(structure_name: str, base: float) -> dict:
-    """Compute earnings + statutory deductions from a Salary Structure for a given base.
+def evaluate_structure_components(structure_name: str, base: float, employee: str | None = None) -> dict:
+    """Compute earnings + statutory deductions using ERPNext's own slip processor.
 
-    Implements the formulae we configured (PAYE/NTAA 2025, Pension, NHF, NHIS).
-    Approximation: assumes formula uses `base` and `gross_pay`; ignores attendance.
+    Builds an in-memory Salary Slip via `make_salary_slip`, runs
+    `process_salary_structure()`, and reads the resulting earnings + deductions
+    rows. Nothing is persisted -- the slip is never inserted.
+
+    This handles iterative formulas (component-abbreviation references) that
+    a naive Python replica cannot resolve. Falls back to a base-only Python
+    estimate if the API is unavailable.
     """
-    ss = frappe.get_cached_doc("Salary Structure", structure_name)
+    earnings_breakdown: dict[str, float] = {}
     earnings_total = 0.0
-    earnings_breakdown = {}
-    for row in ss.earnings:
-        amt = 0.0
-        if row.amount_based_on_formula and row.formula:
-            try:
-                amt = float(frappe.safe_eval(
-                    row.formula,
-                    None,
-                    {"base": base, "B": base, "gross_pay": 0.0},
-                ))
-            except Exception:
-                amt = 0.0
-        else:
+    pen_ee_real = pen_er_real = nhf_real = nhis_real = 0.0
+
+    try:
+        from hrms.payroll.doctype.salary_structure.salary_structure import make_salary_slip
+        slip = make_salary_slip(structure_name, employee=employee)
+        slip.start_date = PERIOD_START
+        slip.end_date   = PERIOD_END
+        slip.posting_date = PERIOD_END
+        # Force the desired base in case SSA on this employee differs
+        slip.base = base
+        slip.process_salary_structure()
+        for row in (slip.earnings or []):
             amt = float(row.amount or 0)
-        earnings_total += amt
-        earnings_breakdown[row.salary_component] = amt
-
-    # Pension EE = 8% of (Basic + Housing + Transport) -- standard Nigeria rule
-    basic    = earnings_breakdown.get("Basic", 0)
-    housing  = earnings_breakdown.get("Housing", 0)
-    transport= earnings_breakdown.get("Transport", 0)
-    pension_base = basic + housing + transport
-    pension_ee = 0.08 * pension_base
-    pension_er = 0.10 * pension_base
-
-    # NHF = 2.5% of Basic
-    nhf = 0.025 * basic
-    # NHIS approx: 1.75% of basic (Sungas plan share)
-    nhis = 0.0175 * basic
-
-    return {
-        "earnings_total": earnings_total,
-        "earnings_breakdown": earnings_breakdown,
-        "pension_ee": pension_ee,
-        "pension_er": pension_er,
-        "nhf": nhf,
-        "nhis": nhis,
-    }
+            earnings_breakdown[row.salary_component] = amt
+            # Statistical components don't post; they're slip-only. Filter them.
+            if not getattr(row, "statistical_component", 0):
+                earnings_total += amt
+        for row in (slip.deductions or []):
+            comp = row.salary_component
+            amt = float(row.amount or 0)
+            if comp in ("Pension Employee", "Pension EE"):
+                pen_ee_real += amt
+            elif comp in ("Pension Employer", "Pension ER"):
+                pen_er_real += amt
+            elif comp == "NHF":
+                nhf_real += amt
+            elif comp == "NHIS":
+                nhis_real += amt
+        # If structure didn't include NHF/NHIS as components, fall back to convention
+        basic = earnings_breakdown.get("Basic Pay", earnings_breakdown.get("Basic", 0))
+        if pen_ee_real == 0:
+            housing  = earnings_breakdown.get("Housing Allowance", earnings_breakdown.get("Housing", 0))
+            transport= earnings_breakdown.get("Transport Allowance", earnings_breakdown.get("Transport", 0))
+            pen_base = basic + housing + transport
+            pen_ee_real = 0.08 * pen_base
+            pen_er_real = 0.10 * pen_base
+        if nhf_real == 0:
+            nhf_real = 0.025 * basic   # convention only; structure doesn't enforce
+        if nhis_real == 0:
+            nhis_real = 0.0    # NHIS replaced by company HMO at Sungas
+        return {
+            "earnings_total":    earnings_total,
+            "earnings_breakdown": earnings_breakdown,
+            "pension_ee":        pen_ee_real,
+            "pension_er":        pen_er_real,
+            "nhf":               nhf_real,
+            "nhis":              nhis_real,
+        }
+    except Exception:
+        # Fallback: best-effort manual evaluation (legacy behaviour)
+        ss = frappe.get_cached_doc("Salary Structure", structure_name)
+        for row in ss.earnings:
+            amt = 0.0
+            if row.amount_based_on_formula and row.formula:
+                try:
+                    amt = float(frappe.safe_eval(row.formula, None, {"base": base, "B": base}))
+                except Exception:
+                    amt = 0.0
+            else:
+                amt = float(row.amount or 0)
+            earnings_total += amt
+            earnings_breakdown[row.salary_component] = amt
+        basic = earnings_breakdown.get("Basic Pay", earnings_breakdown.get("Basic", 0))
+        housing = earnings_breakdown.get("Housing Allowance", earnings_breakdown.get("Housing", 0))
+        transport = earnings_breakdown.get("Transport Allowance", earnings_breakdown.get("Transport", 0))
+        pen_base = basic + housing + transport
+        return {
+            "earnings_total":     earnings_total,
+            "earnings_breakdown": earnings_breakdown,
+            "pension_ee":         0.08 * pen_base,
+            "pension_er":         0.10 * pen_base,
+            "nhf":                0.025 * basic,
+            "nhis":               0.0,
+        }
 
 
 def section_projection(report: list[str], ssas: list[dict]) -> tuple[list[dict], dict]:
@@ -281,7 +322,7 @@ def section_projection(report: list[str], ssas: list[dict]) -> tuple[list[dict],
     for r in ssas:
         try:
             base = float(r["base"] or 0)
-            calc = evaluate_structure_components(r["salary_structure"], base)
+            calc = evaluate_structure_components(r["salary_structure"], base, employee=r["employee"])
         except Exception as e:
             agg["skipped"] += 1
             per_emp_rows.append({
