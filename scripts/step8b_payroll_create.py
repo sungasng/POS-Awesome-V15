@@ -236,64 +236,49 @@ def main():
         report.append(f"  + employees attached (direct SQL): {attached}")
         print(f"  + employees attached (direct SQL): {attached}")
 
-    # Create Salary Slips in draft
+    # Create Salary Slips in draft -- bypass HRMS helper entirely (v15 bug
+    # makes create_salary_slips() silently no-op even with valid employees).
     if CREATE_SLIPS:
-        # Try HRMS helper first
-        try:
-            res = pe.create_salary_slips()
-            frappe.db.commit()
-            slip_count = frappe.db.count("Salary Slip", {"payroll_entry": pe.name})
-            report.append(f"  + create_salary_slips(): triggered (return={res!r})")
-            report.append(f"    Salary Slips now in draft: {slip_count}")
-            print(f"  + Salary Slips in draft (HRMS helper): {slip_count}")
-        except Exception as e:
-            slip_count = 0
-            report.append(f"  ! create_salary_slips() failed: {e}")
-
-        # If HRMS helper produced nothing, fall back to per-employee insert via make_salary_slip
-        if slip_count == 0 and pe.employees:
-            report.append("  ~ HRMS create_salary_slips() returned 0 -- using per-employee fallback")
-            print("  ~ Falling back to per-employee Salary Slip creation...")
-            from hrms.payroll.doctype.salary_structure.salary_structure import make_salary_slip
-            created = 0
-            failed: list[tuple[str, str]] = []
-            # Resolve SSA -> salary_structure per employee
-            ssa_map = {
-                r["employee"]: r["salary_structure"]
-                for r in frappe.db.sql("""
-                    select employee, salary_structure
-                    from `tabSalary Structure Assignment`
-                    where docstatus=1 and from_date<=%s and company=%s
-                    order by from_date desc
-                """, (pe.end_date, pe.company), as_dict=True)
-            }
-            for emp_row in pe.employees:
-                structure = ssa_map.get(emp_row.employee)
-                if not structure:
-                    failed.append((emp_row.employee, "no active SSA"))
-                    continue
-                try:
-                    slip = make_salary_slip(structure, employee=emp_row.employee)
-                    slip.payroll_entry = pe.name
-                    slip.start_date    = pe.start_date
-                    slip.end_date      = pe.end_date
-                    slip.posting_date  = pe.posting_date
-                    slip.payroll_frequency = pe.payroll_frequency
-                    slip.company       = pe.company
-                    slip.insert(ignore_permissions=True)
-                    created += 1
-                except Exception as e:
-                    failed.append((emp_row.employee, str(e)[:120]))
-            frappe.db.commit()
-            slip_count = frappe.db.count("Salary Slip", {"payroll_entry": pe.name})
-            report.append(f"  + per-employee fallback created: {created} slips")
-            report.append(f"    Salary Slips now in draft: {slip_count}")
-            report.append(f"    Failed: {len(failed)}")
-            print(f"  + Salary Slips in draft (fallback): {slip_count}  | failed: {len(failed)}")
-            if failed[:5]:
-                report.append("    Sample failures:")
-                for emp, why in failed[:5]:
-                    report.append(f"      - {emp}: {why}")
+        print("  ~ Creating Salary Slips via make_salary_slip per employee...")
+        from hrms.payroll.doctype.salary_structure.salary_structure import make_salary_slip
+        created = 0
+        failed: list[tuple[str, str]] = []
+        ssa_map = {
+            r["employee"]: r["salary_structure"]
+            for r in frappe.db.sql("""
+                select employee, salary_structure
+                from `tabSalary Structure Assignment`
+                where docstatus=1 and from_date<=%s and company=%s
+                order by from_date desc
+            """, (pe.end_date, pe.company), as_dict=True)
+        }
+        for emp_row in pe.employees:
+            structure = ssa_map.get(emp_row.employee)
+            if not structure:
+                failed.append((emp_row.employee, "no active SSA"))
+                continue
+            try:
+                slip = make_salary_slip(structure, employee=emp_row.employee)
+                slip.payroll_entry     = pe.name
+                slip.start_date        = pe.start_date
+                slip.end_date          = pe.end_date
+                slip.posting_date      = pe.posting_date
+                slip.payroll_frequency = pe.payroll_frequency
+                slip.company           = pe.company
+                slip.insert(ignore_permissions=True)
+                created += 1
+            except Exception as e:
+                failed.append((emp_row.employee, str(e)[:120]))
+        frappe.db.commit()
+        slip_count = frappe.db.count("Salary Slip", {"payroll_entry": pe.name})
+        report.append(f"  + Salary Slips created: {created} | failed: {len(failed)}")
+        report.append(f"    Salary Slips now in draft: {slip_count}")
+        print(f"  + Salary Slips in draft: {slip_count}  |  failed: {len(failed)}")
+        if failed[:8]:
+            report.append("    Sample failures:")
+            for emp, why in failed[:8]:
+                report.append(f"      - {emp}: {why}")
+                print(f"      - {emp}: {why}")
 
     if SUBMIT_PE:
         try:
