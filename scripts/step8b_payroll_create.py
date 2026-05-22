@@ -236,11 +236,10 @@ def main():
         report.append(f"  + employees attached (direct SQL): {attached}")
         print(f"  + employees attached (direct SQL): {attached}")
 
-    # Create Salary Slips in draft -- bypass HRMS helper entirely (v15 bug
-    # makes create_salary_slips() silently no-op even with valid employees).
+    # Create Salary Slips in draft -- build directly via Salary Slip doctype
+    # (bypasses HRMS make_salary_slip() which has a buggy SSA lookup in v15).
     if CREATE_SLIPS:
-        print("  ~ Creating Salary Slips via make_salary_slip per employee...")
-        from hrms.payroll.doctype.salary_structure.salary_structure import make_salary_slip
+        print("  ~ Creating Salary Slips directly (bypassing make_salary_slip)...")
         created = 0
         failed: list[tuple[str, str]] = []
         ssa_map = {
@@ -258,17 +257,20 @@ def main():
                 failed.append((emp_row.employee, "no active SSA"))
                 continue
             try:
-                slip = make_salary_slip(structure, employee=emp_row.employee)
+                slip = frappe.new_doc("Salary Slip")
+                slip.employee          = emp_row.employee
+                slip.salary_structure  = structure
                 slip.payroll_entry     = pe.name
                 slip.start_date        = pe.start_date
                 slip.end_date          = pe.end_date
                 slip.posting_date      = pe.posting_date
                 slip.payroll_frequency = pe.payroll_frequency
                 slip.company           = pe.company
+                slip.currency          = pe.currency
                 slip.insert(ignore_permissions=True)
                 created += 1
             except Exception as e:
-                failed.append((emp_row.employee, str(e)[:120]))
+                failed.append((emp_row.employee, str(e)[:140]))
         frappe.db.commit()
         slip_count = frappe.db.count("Salary Slip", {"payroll_entry": pe.name})
         report.append(f"  + Salary Slips created: {created} | failed: {len(failed)}")
