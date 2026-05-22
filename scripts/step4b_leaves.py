@@ -135,16 +135,25 @@ def create_leave_types(report: list[str]) -> None:
 def create_leave_period(report: list[str]) -> str | None:
     report.append("## 2. Leave Period 2026")
     report.append("")
-    name = LEAVE_PERIOD["name"]
-    if frappe.db.exists("Leave Period", name):
-        report.append(f"  = `{name}` already exists")
-        report.append("")
-        return name
-    if DRY_RUN:
-        report.append(f"  + would-create `{name}` 2026-01-01 to 2026-12-31")
-        report.append("")
-        return name
     company = frappe.defaults.get_user_default("Company") or frappe.get_all("Company", limit=1)[0]["name"]
+    # Look up by date range + company (Frappe Leave Period uses autoname)
+    existing = frappe.db.get_value(
+        "Leave Period",
+        {
+            "from_date": LEAVE_PERIOD["from_date"],
+            "to_date": LEAVE_PERIOD["to_date"],
+            "company": company,
+        },
+        "name",
+    )
+    if existing:
+        report.append(f"  = `{existing}` already exists ({LEAVE_PERIOD['from_date']} -> {LEAVE_PERIOD['to_date']})")
+        report.append("")
+        return existing
+    if DRY_RUN:
+        report.append("  + would-create Leave Period 2026-01-01 to 2026-12-31")
+        report.append("")
+        return "PLACEHOLDER"
     doc = frappe.get_doc({
         "doctype": "Leave Period",
         "from_date": LEAVE_PERIOD["from_date"],
