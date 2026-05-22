@@ -204,6 +204,10 @@ def ensure_holiday_list(name: str, weekly_off_days: list[str], report: list[str]
     if DRY_RUN:
         report.append(f"  + would-create `{name}` (weekly_off={weekly_off_days})")
         return name
+
+    # Build set of public holiday dates so we can dedupe weekly-off insertions
+    public_dates = {date_str for date_str, _ in HOLIDAYS_2026}
+
     doc = frappe.get_doc({
         "doctype": "Holiday List",
         "holiday_list_name": name,
@@ -218,24 +222,31 @@ def ensure_holiday_list(name: str, weekly_off_days: list[str], report: list[str]
             "holiday_date": date_str,
             "description": hname,
         })
-    # Add weekly off as recurring holidays — Frappe will auto-generate based on weekly_off field
-    doc.insert(ignore_permissions=True, ignore_if_duplicate=True)
 
-    # If multiple weekly offs requested, also call get_weekly_off_dates
-    # Frappe's standard Holiday List only supports a single weekly_off select. For
-    # HQ (Sat+Sun), we add the second day's recurring holidays manually.
+    # Auto-populate primary weekly_off (Frappe doesn't do this on insert; we
+    # do it explicitly so leave/payroll engines see the closures).
+    from datetime import date, timedelta
+    weekday_map = {"monday":0,"tuesday":1,"wednesday":2,"thursday":3,"friday":4,"saturday":5,"sunday":6}
+    days_to_populate = []
+    if weekly_off_days:
+        days_to_populate.append((weekly_off_days[0], "primary"))
     if len(weekly_off_days) > 1:
-        from datetime import date, timedelta
-        second_day = weekly_off_days[1].lower()
-        weekday_map = {"monday":0,"tuesday":1,"wednesday":2,"thursday":3,"friday":4,"saturday":5,"sunday":6}
-        target = weekday_map[second_day]
-        cur = date(2026,1,1)
-        while cur <= date(2026,12,31):
-            if cur.weekday() == target:
-                doc.append("holidays", {"holiday_date": cur.isoformat(), "description": weekly_off_days[1], "weekly_off": 1})
-            cur += timedelta(days=1)
-        doc.save(ignore_permissions=True)
+        days_to_populate.append((weekly_off_days[1], "secondary"))
 
+    for day_name, _kind in days_to_populate:
+        target = weekday_map[day_name.lower()]
+        cur = date(2026, 1, 1)
+        while cur <= date(2026, 12, 31):
+            if cur.weekday() == target and cur.isoformat() not in public_dates:
+                doc.append("holidays", {
+                    "holiday_date": cur.isoformat(),
+                    "description": day_name,
+                    "weekly_off": 1,
+                })
+                public_dates.add(cur.isoformat())  # also dedupe across both days
+            cur += timedelta(days=1)
+
+    doc.insert(ignore_permissions=True, ignore_if_duplicate=True)
     return doc.name
 
 
