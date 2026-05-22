@@ -186,14 +186,10 @@ def populate_grade_level(report: list[str]) -> None:
     for emp_id, (grade, _, _) in updates.items():
         if frappe.db.get_value("Employee", emp_id, "grade_level") != grade:
             frappe.db.set_value("Employee", emp_id, "grade_level", grade)
-    # Default any with NULL grade to G6
-    null_employees = frappe.db.sql(
-        "select name from tabEmployee where status='Active' and (grade_level is null or grade_level='')",
-        as_dict=1,
-    )
-    for row in null_employees:
-        frappe.db.set_value("Employee", row["name"], "grade_level", "G6")
-    report.append(f"  + persisted {len(updates)} grade-overrides, {len(null_employees)} defaulted to G6")
+    report.append(f"  + persisted {len(updates)} grade-overrides via designation match")
+    report.append("  (Employees without designation match: NOT auto-defaulted to G6 here.)")
+    report.append("  (Custom Field's default='G6' handles brand-new records;")
+    report.append("   for existing employees, run apply_grade_overrides.py with HR-edited CSV.)")
     report.append("")
 
 

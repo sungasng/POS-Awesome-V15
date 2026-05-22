@@ -159,39 +159,41 @@ def create_leave_period(report: list[str]) -> str | None:
 
 
 def create_leave_policies(report: list[str]) -> dict[str, str]:
+    """Returns dict: title -> actual Frappe document name (e.g. HR-LPOL-2026-00001)."""
     report.append("## 3. Leave Policies (G1, G2, G3-G7)")
     report.append("")
-    # We need 3 policies, one for each Annual allocation tier
     policies = {
         "Sungas Leave Policy - G1 (20d Annual)":      20,
         "Sungas Leave Policy - G2 (15d Annual)":      15,
         "Sungas Leave Policy - G3-G7 (10d Annual)":   10,
     }
-    created: dict[str, str] = {}
-    for policy_name, annual_days in policies.items():
-        if frappe.db.exists("Leave Policy", policy_name):
-            created[policy_name] = policy_name
-            report.append(f"  = `{policy_name}` already exists")
+    title_to_name: dict[str, str] = {}
+    for policy_title, annual_days in policies.items():
+        # Look up existing by title
+        existing = frappe.db.get_value("Leave Policy", {"title": policy_title}, "name")
+        if existing:
+            title_to_name[policy_title] = existing
+            report.append(f"  = `{existing}` (title: {policy_title!r}) already exists")
             continue
         if DRY_RUN:
-            created[policy_name] = policy_name
-            report.append(f"  + would-create `{policy_name}` (Annual={annual_days})")
+            title_to_name[policy_title] = policy_title  # placeholder
+            report.append(f"  + would-create policy with title `{policy_title}` (Annual={annual_days})")
             continue
         details = [{"leave_type": "Annual Leave", "annual_allocation": annual_days}]
         for lt, alloc in UNIFORM_ALLOCATIONS.items():
             details.append({"leave_type": lt, "annual_allocation": alloc})
         doc = frappe.get_doc({
             "doctype": "Leave Policy",
-            "title": policy_name,
+            "title": policy_title,
             "leave_policy_details": details,
         }).insert(ignore_permissions=True)
-        created[policy_name] = doc.name
-        report.append(f"  + created `{doc.name}`")
+        title_to_name[policy_title] = doc.name
+        report.append(f"  + created `{doc.name}` (title: {policy_title!r})")
     report.append("")
-    return created
+    return title_to_name
 
 
-GRADE_TO_POLICY = {
+GRADE_TO_POLICY_TITLE = {
     "G1": "Sungas Leave Policy - G1 (20d Annual)",
     "G2": "Sungas Leave Policy - G2 (15d Annual)",
     "G3": "Sungas Leave Policy - G3-G7 (10d Annual)",
@@ -202,7 +204,7 @@ GRADE_TO_POLICY = {
 }
 
 
-def assign_leave_policies(period: str | None, policies: dict[str, str], report: list[str]) -> None:
+def assign_leave_policies(period: str | None, policies_by_title: dict[str, str], report: list[str]) -> None:
     report.append("## 4. Leave Policy Assignments (per active employee)")
     report.append("")
     if not period:
@@ -224,12 +226,15 @@ def assign_leave_policies(period: str | None, policies: dict[str, str], report: 
     for emp in employees:
         grade = emp.get("grade_level")
         if not grade:
-            # Service providers (vigilantes, freelance, etc.) -- skip entirely
             skipped_no_grade += 1
             continue
-        policy_name = GRADE_TO_POLICY.get(grade)
-        if not policy_name:
+        policy_title = GRADE_TO_POLICY_TITLE.get(grade)
+        if not policy_title:
             skipped += 1
+            continue
+        policy_name = policies_by_title.get(policy_title)
+        if not policy_name:
+            errors.append((emp["name"], f"Policy with title {policy_title!r} not in registry"))
             continue
         # Skip if existing active assignment exists for this period
         existing = frappe.db.exists(
@@ -241,11 +246,11 @@ def assign_leave_policies(period: str | None, policies: dict[str, str], report: 
             },
         )
         if existing:
-            by_policy.setdefault(policy_name, 0)
-            by_policy[policy_name] += 1
+            by_policy.setdefault(policy_title, 0)
+            by_policy[policy_title] += 1
             continue
-        by_policy.setdefault(policy_name, 0)
-        by_policy[policy_name] += 1
+        by_policy.setdefault(policy_title, 0)
+        by_policy[policy_title] += 1
         if DRY_RUN:
             created += 1
             continue
@@ -272,8 +277,8 @@ def assign_leave_policies(period: str | None, policies: dict[str, str], report: 
     report.append(f"  Errors: {len(errors)}")
     report.append("")
     report.append("  Distribution by policy:")
-    for policy_name, n in sorted(by_policy.items(), key=lambda x: -x[1]):
-        report.append(f"    {n:3d}x  {policy_name}")
+    for policy_title, n in sorted(by_policy.items(), key=lambda x: -x[1]):
+        report.append(f"    {n:3d}x  {policy_title}")
     if errors:
         report.append("")
         report.append("  Error details:")
