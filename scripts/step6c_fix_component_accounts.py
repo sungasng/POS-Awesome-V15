@@ -26,8 +26,10 @@ DRY_RUN = True
 COMPANY = "SUNGAS COMPANY LIMITED"
 
 # (salary_component, target_account)
+# Note: Medical Allowance / HMO Benchmark are STATISTICAL (company-borne, slip-only,
+# no GL impact) and intentionally have no Account mapping. We wire only the real
+# cash earnings here.
 MAPPINGS = [
-    ("Medical Allowance", "9101 - Salary and wages - SCL"),
     ("Leave Allowance",   "9101 - Salary and wages - SCL"),
     ("13th Month",        "9101 - Salary and wages - SCL"),
 ]

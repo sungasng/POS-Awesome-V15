@@ -57,12 +57,22 @@ def main():
 
     issues = 0
     for comp_name, kind in components:
+        # Pull the Salary Component flag (statistical components are slip-only, no GL)
+        is_statistical = bool(frappe.db.get_value("Salary Component", comp_name, "statistical_component") or 0)
+
         # Salary Component has child table `accounts` with company + account
         account = frappe.db.get_value(
             "Salary Component Account",
             {"parent": comp_name, "company": COMPANY},
             "account",
         )
+
+        # Statistical components are intentionally unmapped (company-borne, no GL post).
+        if is_statistical:
+            label = "STAT" if not account else f"STAT (mapped: {account})"
+            out.append(f"| {comp_name} | {kind} (statistical) | _(none expected)_ | - | = {label} |")
+            continue
+
         if not account:
             out.append(f"| {comp_name} | {kind} | _(none)_ | - | ! NO MAPPING |")
             issues += 1
