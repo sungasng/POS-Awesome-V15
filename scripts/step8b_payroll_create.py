@@ -183,16 +183,58 @@ def main():
     report.append(f"  + Payroll Entry created: `{pe.name}`")
     print(f"  + Payroll Entry created: {pe.name}")
 
-    # Fill employee table using ERPNext's own helper (handles filters + dedup + branch checks).
+    # Reload from DB so all defaults / autoset fields are populated
+    pe = frappe.get_doc("Payroll Entry", pe.name)
+
+    # Fill employee table -- try HRMS helper first; fall back to direct SQL.
     try:
         pe.fill_employee_details()
         pe.save(ignore_permissions=True)
         frappe.db.commit()
-        report.append(f"  + fill_employee_details(): {len(pe.employees)} employees attached")
-        print(f"  + fill_employee_details(): {len(pe.employees)} employees attached")
+        attached = len(pe.employees or [])
+        report.append(f"  + fill_employee_details(): {attached} employees attached")
+        print(f"  + fill_employee_details(): {attached} employees attached")
     except Exception as e:
         report.append(f"  ! fill_employee_details() failed: {e}")
-        print(f"  ! fill_employee_details() failed: {e}")
+        attached = 0
+
+    if not pe.employees:
+        # Fallback: emulate the HRMS query directly. Proven to return 216.
+        report.append("  ~ HRMS helper returned 0 -- using direct SQL fallback")
+        rows = frappe.db.sql("""
+            select distinct e.name as employee, e.employee_name, e.department,
+                   e.designation, ssa.base, ssa.variable
+            from `tabEmployee` e
+            join `tabSalary Structure Assignment` ssa on ssa.employee = e.name
+            join `tabSalary Structure` ss on ss.name = ssa.salary_structure
+            where e.status = 'Active'
+              and e.company = %s
+              and ssa.docstatus = 1
+              and ssa.company = %s
+              and ssa.from_date <= %s
+              and ssa.payroll_payable_account = %s
+              and ss.is_active = 'Yes'
+              and ss.currency = %s
+              and ss.payroll_frequency = %s
+              and (e.relieving_date is null or e.relieving_date >= %s)
+        """, (pe.company, pe.company, pe.end_date, pe.payroll_payable_account,
+              pe.currency, pe.payroll_frequency, pe.start_date), as_dict=True)
+        report.append(f"  ~ direct SQL returned {len(rows)} employees")
+        pe.set("employees", [])
+        for r in rows:
+            pe.append("employees", {
+                "employee":      r["employee"],
+                "employee_name": r["employee_name"],
+                "department":    r["department"],
+                "designation":   r["designation"],
+                "base":          r["base"],
+                "variable":      r["variable"],
+            })
+        pe.save(ignore_permissions=True)
+        frappe.db.commit()
+        attached = len(pe.employees)
+        report.append(f"  + employees attached (direct SQL): {attached}")
+        print(f"  + employees attached (direct SQL): {attached}")
 
     # Create Salary Slips in draft
     if CREATE_SLIPS:
