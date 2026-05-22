@@ -37,9 +37,16 @@ import frappe
 
 
 # --- Edit these before running -------------------------------------------------
-PERIOD_START = "2026-06-01"
-PERIOD_END   = "2026-06-30"
+PERIOD_START = "2026-05-01"
+PERIOD_END   = "2026-05-31"
 COMPANY      = "Sungas Company Limited"
+# Sungas policy (2026): every active employee is deemed to claim the maximum
+# rent relief. We therefore floor `rent_paid_annually` at 2,500,000 in this
+# Python-side projection so the cap of NGN 500,000 always applies. The live
+# PAYE Salary Component formula relies on the actual Employee field, so run
+# step3c_apply_max_rent_relief.py BEFORE the live payroll cycle.
+ASSUME_MAX_RENT_RELIEF = True
+RENT_RELIEF_FLOOR      = 2_500_000   # 20% * 2,500,000 = 500,000 (cap)
 # -----------------------------------------------------------------------------
 
 
@@ -289,6 +296,8 @@ def section_projection(report: list[str], ssas: list[dict]) -> tuple[list[dict],
         earnings = calc["earnings_total"]
         pen_ee   = calc["pension_ee"]
         rent     = float(r.get("rent_paid_annually") or 0)
+        if ASSUME_MAX_RENT_RELIEF:
+            rent = max(rent, RENT_RELIEF_FLOOR)
 
         if r.get("designation") in designations_excluded:
             paye_monthly = 0.0

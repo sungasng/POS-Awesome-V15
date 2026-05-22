@@ -33,10 +33,10 @@ import frappe
 # --- Edit these before running -------------------------------------------------
 DRY_RUN = True
 
-PERIOD_START      = "2026-06-01"
-PERIOD_END        = "2026-06-30"
-POSTING_DATE      = "2026-06-25"
-PAYMENT_DATE      = "2026-06-25"
+PERIOD_START      = "2026-05-01"
+PERIOD_END        = "2026-05-31"
+POSTING_DATE      = "2026-05-25"
+PAYMENT_DATE      = "2026-05-25"
 COMPANY           = "Sungas Company Limited"
 PAYROLL_FREQUENCY = "Monthly"
 EXCHANGE_RATE     = 1.0

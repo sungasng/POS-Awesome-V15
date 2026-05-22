@@ -1,31 +1,62 @@
-# Step 8 — Parallel Payroll Run Runbook (June 2026)
+# Step 8 — Parallel Payroll Run Runbook (May 2026)
 
 **Goal:** Validate that ERPNext v15 payroll output matches the legacy Excel
-payroll for the **June 2026** cycle, then disburse via Stanbic IBTC + Fidelity
+payroll for the **May 2026** cycle, then disburse via Stanbic IBTC + Fidelity
 bank uploads.
 
-**Hard deadline:** payment date **2026-06-25**.
+**Hard deadline:** payment date **2026-05-25**.
 
 This runbook is the practical companion to:
 
+- `scripts/step3c_apply_max_rent_relief.py` — floor `rent_paid_annually` so PAYE relief = ₦500k everywhere
+- `scripts/step3d_residual_employees.py` — verify HR-EMP-00326/00327 + onboard 2 new hires
 - `scripts/step8a_payroll_preflight.py` — read-only validation
 - `scripts/step8b_payroll_create.py` — creates the Payroll Entry + Salary Slips
 - `scripts/step8c_payroll_reconcile.py` — ERP vs Excel variance report
 - `scripts/step6b_bank_upload.py`        — Stanbic / Fidelity CSV generator
 
+> **Rent relief policy (2026):** every active employee is *deemed* to claim
+> the maximum PAYE rent relief based on their declarations. Step 3c floors
+> `Employee.rent_paid_annually` at NGN 2,500,000 so the existing live formula
+> (`min(0.20 × rent, 500,000)`) caps everyone at the ₦500,000 statutory max.
+
 ---
 
-## 0. Prerequisites (one-off, already complete)
+## 0. Prerequisites
 
 | Step | What | Status |
 |------|------|--------|
 | 2c.3 | 21 Cost Centres + 212 SSAs submitted              | ✅ |
 | 3    | PAYE NTAA 2025 brackets + `rent_paid_annually`     | ✅ |
 | 3a   | 10× base-pay bug audited & corrected               | ✅ |
+| 3c   | **Max rent relief floored on every active employee** | run `step3c_apply_max_rent_relief.py` |
+| 3d   | **Onboard residual hires (Isaac, Godwin); verify HR-EMP-00326/00327** | run `step3d_residual_employees.py` |
 | 4    | Holiday Lists + Leaves + Leave Period 2026         | ✅ |
 | 4c   | `Leave Allowance` + `13th Month` components hooked | ✅ |
 | 5    | 3 workflows live (Leave / Expense / Payroll)       | ✅ |
 | 6a   | 45 NIBSS bank codes seeded                         | ✅ |
+
+### 0a. Apply max rent relief (Step 3c)
+
+```bash
+curl -fsSL "https://raw.githubusercontent.com/sungasng/POS-Awesome-V15/feat/sungas-customizations/scripts/step3c_apply_max_rent_relief.py" -o /tmp/s3c.py
+bench --site sungasmis.v.frappe.cloud execute "exec(open('/tmp/s3c.py').read())"
+# Review preview, then:
+sed -i 's/^DRY_RUN = .*/DRY_RUN = False/' /tmp/s3c.py
+bench --site sungasmis.v.frappe.cloud execute "exec(open('/tmp/s3c.py').read())"
+```
+
+### 0b. Verify + onboard residual employees (Step 3d)
+
+```bash
+curl -fsSL "https://raw.githubusercontent.com/sungasng/POS-Awesome-V15/feat/sungas-customizations/scripts/step3d_residual_employees.py" -o /tmp/s3d.py
+bench --site sungasmis.v.frappe.cloud execute "exec(open('/tmp/s3d.py').read())"
+```
+
+For Isaac Onwuzuluigbo and Godwin Saviour, fill the pending fields
+(`gender`, `designation`, `department`, `branch`, `payroll_cost_center`,
+`grade_level`, `salary_base`) inside the script's `NEW_HIRES` list before
+flipping `DRY_RUN=False`.
 
 ---
 
