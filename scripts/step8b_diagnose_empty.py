@@ -42,7 +42,7 @@ def main() -> None:
     for ctype in ("earnings", "deductions"):
         rows = frappe.db.sql("""
             select salary_component, abbr, amount_based_on_formula, formula,
-                   amount, condition, statistical_component, do_not_include_in_total
+                   amount, `condition`, statistical_component, do_not_include_in_total, idx
             from `tabSalary Detail`
             where parent = %s and parentfield = %s
             order by idx
@@ -50,7 +50,7 @@ def main() -> None:
         print(f"  {ctype.upper():<10}  ({len(rows)} rows)")
         for r in rows:
             stat = " STAT" if r.get("statistical_component") else ""
-            print(f"    {r['idx'] if 'idx' in r else '-':<3} {r['salary_component']!s:<24} "
+            print(f"    {r['idx']:<3} {r['salary_component']!s:<24} "
                   f"abbr={r['abbr']!s:<6} formula?={r.get('amount_based_on_formula')}"
                   f"  amount={r['amount']}{stat}")
             if r.get("condition"):
