@@ -41,16 +41,17 @@ STRUCTURE = "Sungas Standard"
 
 
 PAYE_FORMULA = (
-    "(0 if max(0, gross_pay*12 - min(0.20 * (rent_paid_annually or 0), 500000) - (PEN_EE or 0) * 12) <= 800000 "
-    "else (max(0, gross_pay*12 - min(0.20 * (rent_paid_annually or 0), 500000) - (PEN_EE or 0) * 12) - 800000) * 0.15 "
-    "if max(0, gross_pay*12 - min(0.20 * (rent_paid_annually or 0), 500000) - (PEN_EE or 0) * 12) <= 3000000 "
-    "else 330000 + (max(0, gross_pay*12 - min(0.20 * (rent_paid_annually or 0), 500000) - (PEN_EE or 0) * 12) - 3000000) * 0.18 "
-    "if max(0, gross_pay*12 - min(0.20 * (rent_paid_annually or 0), 500000) - (PEN_EE or 0) * 12) <= 12000000 "
-    "else 1950000 + (max(0, gross_pay*12 - min(0.20 * (rent_paid_annually or 0), 500000) - (PEN_EE or 0) * 12) - 12000000) * 0.21 "
-    "if max(0, gross_pay*12 - min(0.20 * (rent_paid_annually or 0), 500000) - (PEN_EE or 0) * 12) <= 25000000 "
-    "else 4680000 + (max(0, gross_pay*12 - min(0.20 * (rent_paid_annually or 0), 500000) - (PEN_EE or 0) * 12) - 25000000) * 0.23 "
-    "if max(0, gross_pay*12 - min(0.20 * (rent_paid_annually or 0), 500000) - (PEN_EE or 0) * 12) <= 50000000 "
-    "else 10430000 + (max(0, gross_pay*12 - min(0.20 * (rent_paid_annually or 0), 500000) - (PEN_EE or 0) * 12) - 50000000) * 0.25"
+    "("
+    "0 if (gross_pay*12 - ((0.20 * (rent_paid_annually or 0)) if (rent_paid_annually or 0) < 2500000 else 500000) - (PEN_EE or 0) * 12) <= 800000 "
+    "else ((gross_pay*12 - ((0.20 * (rent_paid_annually or 0)) if (rent_paid_annually or 0) < 2500000 else 500000) - (PEN_EE or 0) * 12) - 800000) * 0.15 "
+    "if (gross_pay*12 - ((0.20 * (rent_paid_annually or 0)) if (rent_paid_annually or 0) < 2500000 else 500000) - (PEN_EE or 0) * 12) <= 3000000 "
+    "else 330000 + ((gross_pay*12 - ((0.20 * (rent_paid_annually or 0)) if (rent_paid_annually or 0) < 2500000 else 500000) - (PEN_EE or 0) * 12) - 3000000) * 0.18 "
+    "if (gross_pay*12 - ((0.20 * (rent_paid_annually or 0)) if (rent_paid_annually or 0) < 2500000 else 500000) - (PEN_EE or 0) * 12) <= 12000000 "
+    "else 1950000 + ((gross_pay*12 - ((0.20 * (rent_paid_annually or 0)) if (rent_paid_annually or 0) < 2500000 else 500000) - (PEN_EE or 0) * 12) - 12000000) * 0.21 "
+    "if (gross_pay*12 - ((0.20 * (rent_paid_annually or 0)) if (rent_paid_annually or 0) < 2500000 else 500000) - (PEN_EE or 0) * 12) <= 25000000 "
+    "else 4680000 + ((gross_pay*12 - ((0.20 * (rent_paid_annually or 0)) if (rent_paid_annually or 0) < 2500000 else 500000) - (PEN_EE or 0) * 12) - 25000000) * 0.23 "
+    "if (gross_pay*12 - ((0.20 * (rent_paid_annually or 0)) if (rent_paid_annually or 0) < 2500000 else 500000) - (PEN_EE or 0) * 12) <= 50000000 "
+    "else 10430000 + ((gross_pay*12 - ((0.20 * (rent_paid_annually or 0)) if (rent_paid_annually or 0) < 2500000 else 500000) - (PEN_EE or 0) * 12) - 50000000) * 0.25"
     ") / 12"
 )
 
