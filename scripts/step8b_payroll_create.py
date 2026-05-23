@@ -186,13 +186,14 @@ def main():
     # Reload from DB so all defaults / autoset fields are populated
     pe = frappe.get_doc("Payroll Entry", pe.name)
 
-    # ---- SSA payroll_payable_account audit + auto-repair ------------------
+    # ---- SSA payroll_payable_account + from_date audit + auto-repair --------
     # v15 Salary Slip.set_salary_structure_assignment() filters SSAs by
-    # payroll_payable_account. If any active SSA in the window points at a
-    # stale account, slip.insert() throws "Please assign a Salary Structure".
-    # Auto-repair by stamping every active SSA in the window to pe.payroll_payable_account.
-    stale_ssas = frappe.db.sql("""
-        select ssa.name, ssa.employee, ssa.payroll_payable_account
+    # `payroll_payable_account` AND `from_date <= slip.start_date`. If any
+    # active SSA in the window has a stale account OR a from_date AFTER
+    # pe.start_date, slip.insert() throws "Please assign a Salary Structure".
+    # Auto-repair: stamp payable account and back-date from_date to pe.start_date.
+    stale_account = frappe.db.sql("""
+        select ssa.name
         from `tabSalary Structure Assignment` ssa
         join `tabEmployee` e on e.name = ssa.employee
         where ssa.docstatus = 1
@@ -204,25 +205,55 @@ def main():
                or ssa.payroll_payable_account != %s)
     """, (pe.company, pe.end_date, pe.payroll_payable_account), as_dict=True)
 
-    if stale_ssas:
+    stale_dates = frappe.db.sql("""
+        select ssa.name, ssa.from_date
+        from `tabSalary Structure Assignment` ssa
+        join `tabEmployee` e on e.name = ssa.employee
+        where ssa.docstatus = 1
+          and e.status = 'Active'
+          and e.company = %s
+          and ssa.from_date > %s
+          and ssa.from_date <= %s
+    """, (pe.company, pe.start_date, pe.end_date), as_dict=True)
+
+    if stale_account:
         report.append("")
-        report.append(f"## SSA payable-account audit: {len(stale_ssas)} stale -- auto-repairing")
-        distinct_old = {(s.get("payroll_payable_account") or "<empty>") for s in stale_ssas}
-        report.append(f"  Old accounts seen : {sorted(distinct_old)}")
-        report.append(f"  New account       : {pe.payroll_payable_account}")
-        print(f"  ~ SSA audit: {len(stale_ssas)} stale, auto-repairing -> {pe.payroll_payable_account}")
-        for s in stale_ssas:
+        report.append(f"## SSA payable-account audit: {len(stale_account)} stale -- auto-repairing")
+        for s in stale_account:
             frappe.db.set_value(
                 "Salary Structure Assignment", s["name"],
                 "payroll_payable_account", pe.payroll_payable_account,
                 update_modified=False,
             )
         frappe.db.commit()
-        report.append(f"  + {len(stale_ssas)} SSAs updated")
+        print(f"  ~ Repaired {len(stale_account)} stale payable accounts")
     else:
         report.append("")
         report.append("## SSA payable-account audit: all clean")
-        print("  = SSA audit: all clean")
+        print("  = SSA payable-account audit: all clean")
+
+    if stale_dates:
+        sample_dates = sorted({str(s["from_date"]) for s in stale_dates})[:6]
+        report.append("")
+        report.append(f"## SSA from_date audit: {len(stale_dates)} SSAs dated AFTER pe.start_date={pe.start_date}")
+        report.append(f"   Distinct dates seen: {sample_dates}")
+        report.append(f"   Auto-repairing -> from_date = {pe.start_date}")
+        print(f"  ~ {len(stale_dates)} SSAs dated AFTER pe.start_date={pe.start_date}; auto-repairing")
+        frappe.db.sql("""
+            update `tabSalary Structure Assignment` ssa
+            join `tabEmployee` e on e.name = ssa.employee
+            set ssa.from_date = %s, ssa.modified = NOW()
+            where ssa.docstatus = 1
+              and e.status = 'Active'
+              and e.company = %s
+              and ssa.from_date > %s
+              and ssa.from_date <= %s
+        """, (pe.start_date, pe.company, pe.start_date, pe.end_date))
+        frappe.db.commit()
+        print(f"  + Repaired {len(stale_dates)} SSA from_date values")
+    else:
+        report.append("## SSA from_date audit: all clean")
+        print("  = SSA from_date audit: all clean")
 
     # Fill employee table -- try HRMS helper first; fall back to direct SQL.
     try:
