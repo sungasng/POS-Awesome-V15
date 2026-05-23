@@ -39,10 +39,11 @@ from pathlib import Path
 import frappe
 
 
-# --- Edit these two before running ---
-PAYROLL_ENTRY = "REPLACE_WITH_PAYROLL_ENTRY_NAME"
-BANK = "STANBIC"  # STANBIC or FIDELITY
-# --------------------------------------
+# --- Edit these before running ---
+PAYROLL_ENTRY  = "REPLACE_WITH_PAYROLL_ENTRY_NAME"
+BANK           = "STANBIC"  # STANBIC or FIDELITY
+INCLUDE_DRAFT  = True       # True for parallel-run dry tests; flip to False before live disbursement
+# ----------------------------------
 
 # Sender bank account name shown in Stanbic file (col "Sender")
 SENDER_NAME = "SUNGAS COMPANY LIMITED"
@@ -50,7 +51,8 @@ SENDER_NAME = "SUNGAS COMPANY LIMITED"
 
 def fetch_slip_rows(payroll_entry: str) -> list[dict]:
     """Return list of dicts with employee + bank + net_pay for each Salary Slip."""
-    rows = frappe.db.sql("""
+    docstatus_filter = "ss.docstatus in (0, 1)" if INCLUDE_DRAFT else "ss.docstatus = 1"
+    rows = frappe.db.sql(f"""
         select
             ss.name as slip_name,
             ss.employee,
@@ -59,11 +61,12 @@ def fetch_slip_rows(payroll_entry: str) -> list[dict]:
             e.bank_ac_no,
             ss.net_pay,
             ss.start_date,
-            ss.end_date
+            ss.end_date,
+            ss.docstatus
         from `tabSalary Slip` ss
         join tabEmployee e on e.name = ss.employee
         where ss.payroll_entry = %s
-          and ss.docstatus = 1
+          and {docstatus_filter}
         order by e.employee_name
     """, (payroll_entry,), as_dict=True)
     return rows
@@ -168,8 +171,14 @@ def main():
 
     rows = fetch_slip_rows(PAYROLL_ENTRY)
     if not rows:
-        print(f"  ! No submitted Salary Slips for {PAYROLL_ENTRY}")
+        kind = "draft or submitted" if INCLUDE_DRAFT else "submitted"
+        print(f"  ! No {kind} Salary Slips for {PAYROLL_ENTRY}")
         return
+
+    draft_count = sum(1 for r in rows if r.get("docstatus") == 0)
+    if draft_count:
+        print(f"  ~ Including {draft_count} DRAFT slip(s) -- INCLUDE_DRAFT=True (parallel-run mode)")
+        print( "    Set INCLUDE_DRAFT=False before generating the live disbursement file.")
 
     bank_codes = fetch_bank_codes()
     print(f"  Found {len(rows)} Salary Slip(s) | {len(bank_codes)} banks have NIBSS codes")
