@@ -1,307 +1,354 @@
 """
-Phase 6 / Step 8c: Parallel Payroll Run -- RECONCILE ERP vs EXCEL BASELINE.
+Phase 6 / Step 8c -- Reconcile ERP Salary Slips vs Excel baseline.
 
-Compares each ERP Salary Slip (in draft or submitted) against a CSV exported
-from the legacy Excel payroll. Produces a per-employee variance report so HR /
-Finance can sign off before workflow approval.
+Compares Net Pay (and optionally Gross / PAYE / Pension EE) between:
+  - ERP: all Salary Slips on a Payroll Entry
+  - Excel: the legacy 'STAFF PAYROLL FOR MAY 2026.xls' workbook
+           (one sheet per location; columns: Name, Gross, Basic, Transport,
+            Housing, Cola, Medical, NSITF, Pension ER, Pension EE, PAYE,
+            Total Earning, Total Deduction, Net Pay, etc.)
 
-Excel baseline CSV (place at /tmp/payroll_excel_baseline.csv) -- columns:
+Matching is fuzzy on full name (token set Jaccard >= 0.80) because:
+  - Excel: "ABANIKANDA FEMI"      ERP: "FEMI Abanikanda"
+  - Excel: "AYO AKINBOBOLA"       ERP: "Akinbobola AYO"
+  - Excel: "BULUS SATI"           ERP: "Bulus Sati"
 
-    employee,gross,paye,pension_ee,nhf,nhis,net
-    HR-EMP-00001,450000,52340,28000,7500,5250,357010
-    HR-EMP-00002,...
+Off-payroll contractors (~17 in offpayroll MAY 2026.docx) are NOT in ERP,
+so they naturally fall into the 'unmatched Excel' bucket -- expected.
 
-Notes:
-    - `employee` MUST be the ERP Employee.name (e.g., HR-EMP-00001)
-      OR the legacy `attendance_device_id` if you mapped that column.
-    - Currency: NGN, no commas, no symbols.
+Variances are surfaced in 4 buckets:
+  1. Net Pay variance > NET_PAY_TOLERANCE (default NGN 1)
+  2. Gross variance > GROSS_TOLERANCE
+  3. PAYE variance > PAYE_TOLERANCE
+  4. Pension EE variance > PEN_EE_TOLERANCE
 
 Inputs (edit before running):
-    PAYROLL_ENTRY               -- ERP Payroll Entry name
-    BASELINE_CSV                -- path to Excel-exported baseline CSV
-    VARIANCE_THRESHOLD          -- absolute NGN delta over which a row is flagged
+  PAYROLL_ENTRY      -- ERP PE name (e.g. 'HR-PRUN-2026-00001')
+  EXCEL_PATH         -- local path on the bench. Default downloads from URL.
+  EXCEL_URL          -- public URL (used if EXCEL_PATH does not exist)
 
-Outputs:
-    /tmp/step8c_reconciliation.md      -- summary + variance buckets
-    /tmp/step8c_reconciliation.csv     -- full per-employee delta table
+Read-only. Writes report to /tmp/step8c_reconciliation.md and prints to stdout.
 
 Run:
-    # 1. Upload Excel baseline -- via your local terminal:
-    #    scp payroll_excel_baseline.csv frappecloud:~/frappe-bench/sites/sungasmis.v.frappe.cloud/private/files/
-    #    OR drop it under Desk -> File and copy to /tmp before running:
-    #    cp ~/frappe-bench/sites/sungasmis.v.frappe.cloud/private/files/payroll_excel_baseline.csv /tmp/
-    # 2. Run:
-    curl -fsSL "https://raw.githubusercontent.com/sungasng/POS-Awesome-V15/feat/sungas-customizations/scripts/step8c_payroll_reconcile.py" -o /tmp/s8c.py
-    sed -i 's|^PAYROLL_ENTRY = .*|PAYROLL_ENTRY = "HR-PRE-2026-00001"|' /tmp/s8c.py
+    SHA=<commit>
+    curl -fsSL "https://raw.githubusercontent.com/sungasng/POS-Awesome-V15/$SHA/scripts/step8c_payroll_reconcile.py" -o /tmp/s8c.py
     bench --site sungasmis.v.frappe.cloud execute "exec(open('/tmp/s8c.py').read())"
+
+Dependencies:
+  pip install 'xlrd==1.2.0'   # legacy .xls reader
+  (script will auto-pip-install into the bench venv if missing)
 """
 
 from __future__ import annotations
-import csv
+import os
+import re
+import sys
+import urllib.request
 from pathlib import Path
 import frappe
 
 
-# --- Edit these before running -------------------------------------------------
-PAYROLL_ENTRY      = "REPLACE_WITH_PAYROLL_ENTRY_NAME"
-BASELINE_CSV       = "/tmp/payroll_excel_baseline.csv"
-VARIANCE_THRESHOLD = 1.0     # NGN; deltas <= 1 NGN are tolerated as rounding
+# ---- Edit before running ----------------------------------------------------
+PAYROLL_ENTRY     = "HR-PRUN-2026-00001"
+EXCEL_PATH        = "/tmp/payroll_excel_baseline.xls"
+EXCEL_URL         = ("https://customer-assets.emergentagent.com/job_nextgen-erp-6/"
+                     "artifacts/pop5ckua_STAFF%20PAYROLL%20FOR%20MAY%202026.xls")
+NET_PAY_TOLERANCE = 1.00       # NGN
+GROSS_TOLERANCE   = 1.00
+PAYE_TOLERANCE    = 1.00
+PEN_EE_TOLERANCE  = 1.00
+MATCH_THRESHOLD   = 0.80       # token-set Jaccard ratio
 # -----------------------------------------------------------------------------
 
-
-# Map our reconciliation buckets <-> Salary Slip component columns
-EARNING_LIKE = {"Basic", "Housing", "Transport", "Leave Allowance", "13th Month",
-                "Other Allowance", "Meal Allowance", "Utility"}
-DEDUCTION_BUCKETS = {
-    "paye":       {"PAYE"},
-    "pension_ee": {"Pension Employee", "Pension EE"},
-    "nhf":        {"NHF"},
-    "nhis":       {"NHIS"},
-}
+SKIP_SHEETS = {"APPROVAL MEMO", "TRANSFER 1ST BANK", "BANK TRANSFER IBTC",
+               "CASH SALARY", "IBTC PENSION", "NSITF"}
 
 
-def load_baseline(path: str) -> dict[str, dict]:
-    p = Path(path)
-    if not p.exists():
-        raise FileNotFoundError(f"Excel baseline not found: {path}")
-    out: dict[str, dict] = {}
-    with p.open("r", encoding="utf-8-sig") as f:
-        rdr = csv.DictReader(f)
-        for r in rdr:
-            emp = (r.get("employee") or "").strip()
-            if not emp:
-                continue
-            try:
-                out[emp] = {
-                    "gross":      float((r.get("gross")      or 0) or 0),
-                    "paye":       float((r.get("paye")       or 0) or 0),
-                    "pension_ee": float((r.get("pension_ee") or 0) or 0),
-                    "nhf":        float((r.get("nhf")        or 0) or 0),
-                    "nhis":       float((r.get("nhis")       or 0) or 0),
-                    "net":        float((r.get("net")        or 0) or 0),
-                }
-            except ValueError:
-                continue
-    return out
-
-
-def fetch_erp_slips(payroll_entry: str) -> dict[str, dict]:
-    rows = frappe.db.sql("""
-        select name, employee, employee_name, gross_pay, total_deduction, net_pay
-        from `tabSalary Slip`
-        where payroll_entry = %s
-          and docstatus < 2
-    """, (payroll_entry,), as_dict=True)
-    if not rows:
-        return {}
-
-    # Pull all earnings + deductions in two flat queries
-    slip_names = [r["name"] for r in rows]
-    earnings = frappe.db.sql("""
-        select parent, salary_component, amount
-        from `tabSalary Detail`
-        where parent in %s and parentfield='earnings'
-    """, (slip_names,), as_dict=True)
-    deductions = frappe.db.sql("""
-        select parent, salary_component, amount
-        from `tabSalary Detail`
-        where parent in %s and parentfield='deductions'
-    """, (slip_names,), as_dict=True)
-
-    by_slip: dict[str, dict] = {r["name"]: {**r, "earn": {}, "ded": {}} for r in rows}
-    for e in earnings:
-        by_slip[e["parent"]]["earn"][e["salary_component"]] = float(e["amount"] or 0)
-    for d in deductions:
-        by_slip[d["parent"]]["ded"][d["salary_component"]] = float(d["amount"] or 0)
-
-    out: dict[str, dict] = {}
-    for slip in by_slip.values():
-        bucket_ded = {k: 0.0 for k in DEDUCTION_BUCKETS}
-        for comp, amt in slip["ded"].items():
-            for bucket, names in DEDUCTION_BUCKETS.items():
-                if comp in names:
-                    bucket_ded[bucket] += amt
-                    break
-        out[slip["employee"]] = {
-            "slip_name":     slip["name"],
-            "employee_name": slip["employee_name"],
-            "gross":         float(slip["gross_pay"] or 0),
-            "paye":          bucket_ded["paye"],
-            "pension_ee":    bucket_ded["pension_ee"],
-            "nhf":           bucket_ded["nhf"],
-            "nhis":          bucket_ded["nhis"],
-            "net":           float(slip["net_pay"] or 0),
-        }
-    return out
-
-
-def main():
-    print("=" * 72)
-    print(f" Phase 6 / Step 8c -- Reconcile ERP vs Excel | {PAYROLL_ENTRY}")
-    print("=" * 72)
-
-    if PAYROLL_ENTRY == "REPLACE_WITH_PAYROLL_ENTRY_NAME":
-        print("  ! Edit PAYROLL_ENTRY at top of script first")
-        return
-    if not frappe.db.exists("Payroll Entry", PAYROLL_ENTRY):
-        print(f"  ! Payroll Entry {PAYROLL_ENTRY!r} not found")
-        return
-
+def _ensure_xlrd() -> None:
     try:
-        baseline = load_baseline(BASELINE_CSV)
-    except FileNotFoundError as e:
-        print(f"  ! {e}")
-        print("    Place the Excel-exported CSV at the path above and re-run.")
+        import xlrd  # noqa: F401
+    except ImportError:
+        import subprocess
+        subprocess.check_call([sys.executable, "-m", "pip", "install",
+                               "--quiet", "xlrd==1.2.0"])
+
+
+def _download_excel() -> None:
+    if os.path.exists(EXCEL_PATH):
         return
+    print(f"  ~ Downloading Excel: {EXCEL_URL}")
+    urllib.request.urlretrieve(EXCEL_URL, EXCEL_PATH)
+    print(f"  + Saved to {EXCEL_PATH}")
 
-    erp = fetch_erp_slips(PAYROLL_ENTRY)
-    if not erp:
-        print(f"  ! No Salary Slips found under {PAYROLL_ENTRY}")
-        return
 
-    print(f"  Excel baseline: {len(baseline)} rows | ERP slips: {len(erp)}")
+def _norm_tokens(name: str) -> set[str]:
+    """Normalize a name to a set of tokens for fuzzy matching."""
+    if not name:
+        return set()
+    # uppercase, strip punctuation, split
+    cleaned = re.sub(r"[^A-Z0-9 ]", " ", name.upper())
+    toks = {t for t in cleaned.split() if len(t) >= 2}
+    return toks
 
-    # Reconcile
-    fields = ["gross", "paye", "pension_ee", "nhf", "nhis", "net"]
-    rows: list[dict] = []
-    only_in_excel = sorted(set(baseline.keys()) - set(erp.keys()))
-    only_in_erp   = sorted(set(erp.keys())      - set(baseline.keys()))
-    common        = sorted(set(erp.keys())      & set(baseline.keys()))
 
-    over_threshold = 0
-    abs_totals = {f: {"erp": 0.0, "xls": 0.0, "delta": 0.0} for f in fields}
+def _jaccard(a: set[str], b: set[str]) -> float:
+    if not a or not b:
+        return 0.0
+    inter = len(a & b)
+    union = len(a | b)
+    return inter / union if union else 0.0
 
-    for emp in common:
-        b = baseline[emp]
-        e = erp[emp]
-        deltas = {f: e[f] - b[f] for f in fields}
-        for f in fields:
-            abs_totals[f]["erp"]   += e[f]
-            abs_totals[f]["xls"]   += b[f]
-            abs_totals[f]["delta"] += deltas[f]
-        flagged = any(abs(deltas[f]) > VARIANCE_THRESHOLD for f in fields)
-        if flagged:
-            over_threshold += 1
-        rows.append({
-            "employee": emp,
-            "name": e["employee_name"],
-            "slip": e["slip_name"],
-            "erp_gross":   round(e["gross"], 2),
-            "xls_gross":   round(b["gross"], 2),
-            "d_gross":     round(deltas["gross"], 2),
-            "erp_paye":    round(e["paye"], 2),
-            "xls_paye":    round(b["paye"], 2),
-            "d_paye":      round(deltas["paye"], 2),
-            "erp_pension": round(e["pension_ee"], 2),
-            "xls_pension": round(b["pension_ee"], 2),
-            "d_pension":   round(deltas["pension_ee"], 2),
-            "erp_nhf":     round(e["nhf"], 2),
-            "xls_nhf":     round(b["nhf"], 2),
-            "d_nhf":       round(deltas["nhf"], 2),
-            "erp_nhis":    round(e["nhis"], 2),
-            "xls_nhis":    round(b["nhis"], 2),
-            "d_nhis":      round(deltas["nhis"], 2),
-            "erp_net":     round(e["net"], 2),
-            "xls_net":     round(b["net"], 2),
-            "d_net":       round(deltas["net"], 2),
-            "flagged":     "YES" if flagged else "",
-        })
 
-    # CSV
-    csv_path = Path("/tmp/step8c_reconciliation.csv")
-    if rows:
-        with csv_path.open("w", newline="", encoding="utf-8") as f:
-            w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
-            w.writeheader()
-            w.writerows(rows)
+def _find_header_row(sheet) -> int:
+    """Find the row containing 'Name' + 'Net Pay' headers. Usually row 3."""
+    for r in range(min(sheet.nrows, 8)):
+        row = [str(sheet.cell_value(r, c) or "").strip().lower()
+               for c in range(min(sheet.ncols, 30))]
+        if "name" in row and any("net pay" in h for h in row):
+            return r
+    return -1
 
-    # Markdown summary
-    md: list[str] = []
-    md.append(f"# Step 8c -- Reconciliation Report ({PAYROLL_ENTRY})")
-    md.append("")
-    md.append(f"_Generated: {frappe.utils.now_datetime()} | Threshold: NGN {VARIANCE_THRESHOLD:,.2f}_")
-    md.append("")
-    md.append("## Coverage")
-    md.append("")
-    md.append(f"  Employees in Excel  : {len(baseline)}")
-    md.append(f"  Employees in ERP    : {len(erp)}")
-    md.append(f"  Reconciled (common) : {len(common)}")
-    md.append(f"  Only in Excel       : {len(only_in_excel)}")
-    md.append(f"  Only in ERP         : {len(only_in_erp)}")
-    md.append("")
-    md.append("## Aggregate Comparison")
-    md.append("")
-    md.append("  | Field      |        ERP |      Excel |        Delta |")
-    md.append("  |------------|-----------:|-----------:|-------------:|")
-    for f in fields:
-        a = abs_totals[f]
-        md.append(f"  | {f:<10} | {a['erp']:>10,.2f} | {a['xls']:>10,.2f} | {a['delta']:>+12,.2f} |")
-    md.append("")
-    md.append(f"## Flagged employees (> NGN {VARIANCE_THRESHOLD:,.2f}): {over_threshold}")
-    md.append("")
-    if over_threshold:
-        md.append("  See `/tmp/step8c_reconciliation.csv` (column `flagged`) for the full list.")
-        md.append("")
-        # Top 15 worst offenders by absolute net delta
-        worst = sorted(rows, key=lambda r: abs(r["d_net"]), reverse=True)[:15]
-        md.append("  **Top 15 by abs(net delta):**")
-        md.append("")
-        md.append("  | Employee | Name | ERP Net | Excel Net | Delta |")
-        md.append("  |----------|------|--------:|----------:|------:|")
-        for r in worst:
-            md.append(f"  | {r['employee']} | {r['name']} | "
-                      f"{r['erp_net']:>10,.2f} | {r['xls_net']:>10,.2f} | {r['d_net']:>+10,.2f} |")
-        md.append("")
-    if only_in_excel:
-        md.append("## Only in Excel (no ERP slip)")
-        md.append("")
-        for emp in only_in_excel[:50]:
-            md.append(f"  - {emp}")
-        if len(only_in_excel) > 50:
-            md.append(f"  ... +{len(only_in_excel)-50} more (see CSV)")
-        md.append("")
-    if only_in_erp:
-        md.append("## Only in ERP (no Excel baseline row)")
-        md.append("")
-        for emp in only_in_erp[:50]:
-            md.append(f"  - {emp} ({erp[emp]['employee_name']})")
-        if len(only_in_erp) > 50:
-            md.append(f"  ... +{len(only_in_erp)-50} more (see CSV)")
-        md.append("")
 
-    md_path = Path("/tmp/step8c_reconciliation.md")
-    md_path.write_text("\n".join(md), encoding="utf-8")
+def _col_idx(headers: list[str], *needles: str) -> int:
+    for i, h in enumerate(headers):
+        h_clean = re.sub(r"[^a-z0-9]", "", h.lower())
+        for n in needles:
+            n_clean = re.sub(r"[^a-z0-9]", "", n.lower())
+            if h_clean == n_clean:
+                return i
+    return -1
 
-    # Register File docs (private)
-    import base64
-    for p in (md_path, csv_path):
-        if not p.exists():
+
+def load_excel_records() -> list[dict]:
+    """Return list of {sheet, name, gross, paye, pen_ee, net_pay}."""
+    import xlrd
+    wb = xlrd.open_workbook(EXCEL_PATH)
+    records = []
+
+    for sname in wb.sheet_names():
+        if sname.strip().upper() in SKIP_SHEETS:
             continue
-        try:
-            content = p.read_bytes()
-            frappe.get_doc({
-                "doctype": "File",
-                "file_name": p.name,
-                "is_private": 1,
-                "content": base64.b64encode(content).decode(),
-                "decode": True,
-            }).insert(ignore_permissions=True)
-        except Exception:
-            pass
-    frappe.db.commit()
+        sh = wb.sheet_by_name(sname)
+        hr = _find_header_row(sh)
+        if hr < 0:
+            continue
+        headers = [str(sh.cell_value(hr, c) or "").strip() for c in range(sh.ncols)]
+        idx_name   = _col_idx(headers, "Name")
+        idx_gross  = _col_idx(headers, "Gross")
+        idx_paye   = _col_idx(headers, "PAYEE", "PAYE")
+        idx_pen_ee = _col_idx(headers, "Pension - EE", "Pension EE")
+        idx_net    = _col_idx(headers, "Net Pay")
+        idx_tot_de = _col_idx(headers, "Total Deduction")
+        if idx_name < 0 or idx_net < 0:
+            continue
 
+        for r in range(hr + 1, sh.nrows):
+            raw_name = str(sh.cell_value(r, idx_name) or "").strip()
+            if not raw_name:
+                continue
+            # Skip totals/summary rows
+            if raw_name.lower() in ("total", "totals", "sum", "grand total"):
+                continue
+            net = sh.cell_value(r, idx_net) if idx_net >= 0 else None
+            if isinstance(net, str):
+                try:
+                    net = float(net.replace(",", "").strip()) if net.strip() else None
+                except ValueError:
+                    net = None
+            if net is None or not isinstance(net, (int, float)) or net <= 0:
+                continue
+            def _num(c):
+                v = sh.cell_value(r, c) if c >= 0 else 0
+                if isinstance(v, str):
+                    try:
+                        return float(v.replace(",", "").strip() or 0)
+                    except ValueError:
+                        return 0.0
+                return float(v or 0)
+
+            records.append({
+                "sheet":   sname,
+                "name":    raw_name,
+                "tokens":  _norm_tokens(raw_name),
+                "gross":   _num(idx_gross),
+                "paye":    _num(idx_paye),
+                "pen_ee":  _num(idx_pen_ee),
+                "net_pay": float(net),
+                "tot_de":  _num(idx_tot_de),
+            })
+    print(f"  + Excel records loaded: {len(records)} (across {len([s for s in wb.sheet_names() if s.strip().upper() not in SKIP_SHEETS])} location sheets)")
+    return records
+
+
+def load_erp_records(pe_name: str) -> list[dict]:
+    """Return all draft+submitted slips for the PE with their net_pay etc."""
+    rows = frappe.db.sql("""
+        select ss.name as slip, ss.employee, ss.employee_name,
+               ss.gross_pay, ss.net_pay, ss.total_deduction,
+               (select sum(amount) from `tabSalary Detail`
+                where parent = ss.name and parentfield = 'deductions'
+                  and salary_component = 'PAYE') as paye,
+               (select sum(amount) from `tabSalary Detail`
+                where parent = ss.name and parentfield = 'deductions'
+                  and salary_component = 'Pension Employee') as pen_ee,
+               e.branch
+        from `tabSalary Slip` ss
+        join tabEmployee e on e.name = ss.employee
+        where ss.payroll_entry = %s
+          and ss.docstatus in (0, 1)
+        order by ss.employee_name
+    """, (pe_name,), as_dict=True)
+
+    for r in rows:
+        r["tokens"] = _norm_tokens(r["employee_name"])
+        r["paye"]   = float(r.get("paye") or 0)
+        r["pen_ee"] = float(r.get("pen_ee") or 0)
+    print(f"  + ERP records loaded: {len(rows)} slips for {pe_name}")
+    return rows
+
+
+def match(excel_recs: list[dict], erp_recs: list[dict]) -> tuple[list[dict], list[dict], list[dict]]:
+    """Return (matches, excel_only, erp_only). Each match: {excel, erp, score}."""
+    matches: list[dict] = []
+    used_erp_idx: set[int] = set()
+
+    # First pass: exact token-set equality (Jaccard = 1.0)
+    for ex in excel_recs:
+        best_i = -1
+        best_score = 0.0
+        for i, er in enumerate(erp_recs):
+            if i in used_erp_idx:
+                continue
+            score = _jaccard(ex["tokens"], er["tokens"])
+            if score > best_score:
+                best_score = score
+                best_i = i
+        if best_i >= 0 and best_score >= MATCH_THRESHOLD:
+            matches.append({"excel": ex, "erp": erp_recs[best_i], "score": best_score})
+            used_erp_idx.add(best_i)
+
+    matched_excel_ids = {id(m["excel"]) for m in matches}
+    excel_only = [ex for ex in excel_recs if id(ex) not in matched_excel_ids]
+    erp_only   = [er for i, er in enumerate(erp_recs) if i not in used_erp_idx]
+
+    return matches, excel_only, erp_only
+
+
+def variance(matches: list[dict]) -> dict:
+    """Bucket variances by component."""
+    out = {"net": [], "gross": [], "paye": [], "pen_ee": []}
+    for m in matches:
+        ex, er = m["excel"], m["erp"]
+        d_net   = round(float(er["net_pay"])  - float(ex["net_pay"]),   2)
+        d_gross = round(float(er["gross_pay"]) - float(ex["gross"]),    2)
+        d_paye  = round(float(er["paye"])      - float(ex["paye"]),     2)
+        d_pen   = round(float(er["pen_ee"])    - float(ex["pen_ee"]),   2)
+        row = {"excel": ex, "erp": er, "d_net": d_net, "d_gross": d_gross,
+               "d_paye": d_paye, "d_pen": d_pen, "score": m["score"]}
+        if abs(d_net) > NET_PAY_TOLERANCE:
+            out["net"].append(row)
+        if abs(d_gross) > GROSS_TOLERANCE:
+            out["gross"].append(row)
+        if abs(d_paye) > PAYE_TOLERANCE:
+            out["paye"].append(row)
+        if abs(d_pen) > PEN_EE_TOLERANCE:
+            out["pen_ee"].append(row)
+    for k in out:
+        out[k].sort(key=lambda r: abs(r[f"d_{ 'net' if k=='net' else 'gross' if k=='gross' else 'paye' if k=='paye' else 'pen' }"]), reverse=True)
+    return out
+
+
+def main() -> None:
+    print("=" * 72)
+    print(f" Phase 6 / Step 8c -- Reconcile {PAYROLL_ENTRY} vs Excel baseline")
+    print("=" * 72)
+
+    if not frappe.db.exists("Payroll Entry", PAYROLL_ENTRY):
+        print(f"  ! Payroll Entry '{PAYROLL_ENTRY}' not found.")
+        return
+
+    _ensure_xlrd()
+    _download_excel()
+
+    excel_recs = load_excel_records()
+    erp_recs   = load_erp_records(PAYROLL_ENTRY)
+    matches, excel_only, erp_only = match(excel_recs, erp_recs)
+    var = variance(matches)
+
+    sum_excel_net = sum(ex["net_pay"] for ex in excel_recs)
+    sum_erp_net   = sum(er["net_pay"] for er in erp_recs)
+    sum_match_excel = sum(m["excel"]["net_pay"] for m in matches)
+    sum_match_erp   = sum(m["erp"]["net_pay"]   for m in matches)
+
+    # ---- summary ----
+    lines = []
+    lines.append(f"# Step 8c -- Reconciliation: {PAYROLL_ENTRY}")
+    lines.append("")
+    lines.append("## Counts")
+    lines.append(f"- Excel rows           : {len(excel_recs)}")
+    lines.append(f"- ERP slips            : {len(erp_recs)}")
+    lines.append(f"- Matched              : {len(matches)}")
+    lines.append(f"- Excel only (no ERP)  : {len(excel_only)}  (incl. off-payroll contractors)")
+    lines.append(f"- ERP only (no Excel)  : {len(erp_only)}")
+    lines.append("")
+    lines.append("## Net Pay Totals (NGN)")
+    lines.append(f"- Excel total       : {sum_excel_net:>16,.2f}")
+    lines.append(f"- ERP total         : {sum_erp_net:>16,.2f}")
+    lines.append(f"- Matched-Excel sum : {sum_match_excel:>16,.2f}")
+    lines.append(f"- Matched-ERP   sum : {sum_match_erp:>16,.2f}")
+    lines.append(f"- Matched diff      : {sum_match_erp - sum_match_excel:>+16,.2f}")
+    lines.append("")
+    lines.append(f"## Variances > tolerance (Net={NET_PAY_TOLERANCE} | Gross={GROSS_TOLERANCE} | PAYE={PAYE_TOLERANCE} | PenEE={PEN_EE_TOLERANCE})")
+    lines.append(f"- Net Pay  : {len(var['net'])}")
+    lines.append(f"- Gross    : {len(var['gross'])}")
+    lines.append(f"- PAYE     : {len(var['paye'])}")
+    lines.append(f"- PenEE    : {len(var['pen_ee'])}")
+    lines.append("")
+
+    # ---- detail tables (top 50 per bucket) ----
+    for bucket, header in [("net", "Net Pay"), ("gross", "Gross Pay"),
+                           ("paye", "PAYE"), ("pen_ee", "Pension EE")]:
+        if not var[bucket]:
+            continue
+        lines.append(f"### {header} variances (top 50)")
+        lines.append("")
+        lines.append(f"| Sheet | Excel name | ERP name | ERP slip | Excel {header} | ERP {header} | Diff |")
+        lines.append("|---|---|---|---|---:|---:|---:|")
+        for r in var[bucket][:50]:
+            ex, er = r["excel"], r["erp"]
+            ex_v = ex["net_pay"] if bucket == "net" else ex["gross"] if bucket == "gross" else ex["paye"] if bucket == "paye" else ex["pen_ee"]
+            er_v = er["net_pay"] if bucket == "net" else er["gross_pay"] if bucket == "gross" else er["paye"] if bucket == "paye" else er["pen_ee"]
+            d    = r[f"d_{'net' if bucket=='net' else 'gross' if bucket=='gross' else 'paye' if bucket=='paye' else 'pen'}"]
+            lines.append(f"| {ex['sheet']} | {ex['name']} | {er['employee_name']} | {er['slip']} "
+                         f"| {ex_v:>12,.2f} | {er_v:>12,.2f} | {d:>+12,.2f} |")
+        lines.append("")
+
+    # ---- Excel-only roster ----
+    if excel_only:
+        lines.append("## Excel-only (no ERP match) — incl. off-payroll contractors")
+        lines.append("")
+        lines.append("| Sheet | Name | Excel Net Pay |")
+        lines.append("|---|---|---:|")
+        for ex in sorted(excel_only, key=lambda x: x["sheet"]):
+            lines.append(f"| {ex['sheet']} | {ex['name']} | {ex['net_pay']:>12,.2f} |")
+        lines.append("")
+
+    # ---- ERP-only roster ----
+    if erp_only:
+        lines.append("## ERP-only (no Excel match)")
+        lines.append("")
+        lines.append("| ERP name | Slip | Branch | ERP Net Pay |")
+        lines.append("|---|---|---|---:|")
+        for er in sorted(erp_only, key=lambda x: x["employee_name"]):
+            lines.append(f"| {er['employee_name']} | {er['slip']} | {er.get('branch') or '—'} | {er['net_pay']:>12,.2f} |")
+        lines.append("")
+
+    report = "\n".join(lines)
+    Path("/tmp/step8c_reconciliation.md").write_text(report, encoding="utf-8")
     print()
-    for line in md:
-        print(line)
+    print(report)
     print()
-    print(f"[OK] {csv_path}")
-    print(f"[OK] {md_path}")
-    if over_threshold == 0:
-        print()
-        print(">>> CLEAN: No variances > threshold. Payroll Entry is ready for workflow approval.")
-    else:
-        print()
-        print(f">>> {over_threshold} flagged rows. Review CSV before submitting Payroll Entry.")
+    print("  Full report: /tmp/step8c_reconciliation.md")
 
 
 try:
