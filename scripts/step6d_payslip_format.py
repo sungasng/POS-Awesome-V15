@@ -50,63 +50,55 @@ PAYSLIP_HTML = r"""
 
 <style>
   .sungas-slip { font-family: "Helvetica", "Arial", sans-serif; color:#1f2937;
-                 font-size:11pt; line-height:1.35; max-width:760px; margin:0 auto; }
-  .sungas-slip h1 { font-size:16pt; margin:0; color:#0f3a52; letter-spacing:0.5px; }
-  .sungas-slip h2 { font-size:11pt; margin:0 0 4px 0; color:#0f3a52;
-                    text-transform:uppercase; letter-spacing:0.6px;
-                    border-bottom:1.5px solid #0f3a52; padding-bottom:3px; }
-  .sungas-slip .hdr { display:flex; align-items:center; justify-content:space-between;
-                      border-bottom:3px solid #0f3a52; padding-bottom:8px; margin-bottom:16px; }
-  .sungas-slip .hdr-brand { display:flex; align-items:center; }
-  .sungas-slip .hdr-brand .logo { font-size:24pt; font-weight:700; color:#0f3a52; margin-right:10px; }
-  .sungas-slip .hdr-meta { text-align:right; font-size:10pt; color:#475569; }
-  .sungas-slip .grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:24px;
-                         margin-bottom:14px; font-size:10pt; }
-  .sungas-slip .grid-2 .row { display:grid; grid-template-columns:110px 1fr; padding:2px 0; }
+                 font-size:9.5pt; line-height:1.3; max-width:380px; margin:0 auto; }
+  .sungas-slip h1 { font-size:12pt; margin:0; color:#0f3a52; letter-spacing:0.3px; }
+  .sungas-slip h2 { font-size:9pt; margin:0 0 3px 0; color:#0f3a52;
+                    text-transform:uppercase; letter-spacing:0.5px;
+                    border-bottom:1px solid #0f3a52; padding-bottom:2px; }
+  .sungas-slip .hdr { border-bottom:2px solid #0f3a52; padding-bottom:6px; margin-bottom:10px;
+                      text-align:center; }
+  .sungas-slip .hdr-sub { font-size:8.5pt; color:#64748b; margin-top:2px; }
+  .sungas-slip .hdr-meta { font-size:8pt; color:#475569; margin-top:3px; }
+  .sungas-slip .grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:10px;
+                         margin-bottom:10px; font-size:8.5pt; }
+  .sungas-slip .grid-2 .row { display:grid; grid-template-columns:64px 1fr; padding:1px 0; }
   .sungas-slip .grid-2 .lbl { color:#64748b; }
   .sungas-slip .grid-2 .val { font-weight:600; }
-  .sungas-slip table.tbl { width:100%; border-collapse:collapse; margin-bottom:14px; }
-  .sungas-slip table.tbl td { padding:5px 8px; vertical-align:top; }
+  .sungas-slip table.tbl { width:100%; border-collapse:collapse; margin-bottom:10px;
+                           font-size:9pt; }
+  .sungas-slip table.tbl td { padding:3px 6px; vertical-align:top; }
   .sungas-slip table.tbl td.amt { text-align:right; font-variant-numeric:tabular-nums; }
   .sungas-slip table.tbl tr.tbl-row td { border-bottom:1px dashed #e2e8f0; }
-  .sungas-slip table.tbl tr.tbl-total td { border-top:1.5px solid #0f3a52;
-                                            padding-top:7px; font-weight:700; }
-  .sungas-slip .net-box { background:#f0f7fc; border:1.5px solid #0f3a52;
-                          padding:12px 16px; margin:18px 0;
+  .sungas-slip table.tbl tr.tbl-total td { border-top:1.2px solid #0f3a52;
+                                            padding-top:5px; font-weight:700; }
+  .sungas-slip .net-box { background:#f0f7fc; border:1.2px solid #0f3a52;
+                          padding:8px 10px; margin:12px 0;
                           display:flex; justify-content:space-between; align-items:center; }
-  .sungas-slip .net-box .lbl { font-size:11pt; color:#0f3a52; font-weight:600;
-                                text-transform:uppercase; letter-spacing:0.8px; }
-  .sungas-slip .net-box .val { font-size:18pt; font-weight:700; color:#0f3a52;
+  .sungas-slip .net-box .lbl { font-size:9pt; color:#0f3a52; font-weight:600;
+                                text-transform:uppercase; letter-spacing:0.5px; }
+  .sungas-slip .net-box .val { font-size:13pt; font-weight:700; color:#0f3a52;
                                 font-variant-numeric:tabular-nums; }
-  .sungas-slip .words { font-style:italic; color:#475569; margin-top:-10px;
-                        margin-bottom:18px; font-size:10pt; }
+  .sungas-slip .words { font-style:italic; color:#475569; margin-top:-6px;
+                        margin-bottom:12px; font-size:8.5pt; }
   .sungas-slip .stat-block { background:#fafafa; border:1px solid #e2e8f0;
-                              padding:8px 12px; margin-bottom:14px; font-size:9.5pt;
+                              padding:6px 8px; margin-bottom:10px; font-size:8.5pt;
                               color:#475569; }
   .sungas-slip .stat-block table { width:100%; }
-  .sungas-slip .stat-block td.amt { text-align:right; }
-  .sungas-slip .footer { font-size:9pt; color:#94a3b8; text-align:center;
-                          margin-top:18px; border-top:1px solid #e2e8f0; padding-top:8px; }
-  @media print {
-    .sungas-slip { font-size:10pt; }
-    .sungas-slip h1 { font-size:14pt; }
-    .sungas-slip .net-box .val { font-size:15pt; }
-  }
+  .sungas-slip .stat-block td { padding:2px 4px; }
+  .sungas-slip .stat-block td.amt { text-align:right; font-variant-numeric:tabular-nums; }
+  .sungas-slip .footer { font-size:7.5pt; color:#94a3b8; text-align:center;
+                          margin-top:12px; border-top:1px solid #e2e8f0; padding-top:6px;
+                          line-height:1.4; }
 </style>
 
 <div class="sungas-slip">
 
   <!-- HEADER -->
   <div class="hdr">
-    <div class="hdr-brand">
-      <span class="logo">SUNGAS</span>
-      <div>
-        <h1>{{ doc.company }}</h1>
-        <div style="font-size:9.5pt;color:#64748b;">Payslip for {{ period_label }}</div>
-      </div>
-    </div>
+    <h1>{{ doc.company }}</h1>
+    <div class="hdr-sub">Payslip for {{ period_label }}</div>
     <div class="hdr-meta">
-      Slip #{{ doc.name }}<br>
+      Slip #{{ doc.name }} &nbsp;|&nbsp;
       Pay Date: {{ frappe.utils.formatdate(doc.posting_date, "dd MMM yyyy") }}
     </div>
   </div>
@@ -117,8 +109,8 @@ PAYSLIP_HTML = r"""
       <h2>Employee</h2>
       <div class="row"><span class="lbl">Name</span>     <span class="val">{{ doc.employee_name }}</span></div>
       <div class="row"><span class="lbl">Staff ID</span> <span class="val">{{ doc.employee }}</span></div>
-      <div class="row"><span class="lbl">Department</span><span class="val">{{ doc.department or "—" }}</span></div>
-      <div class="row"><span class="lbl">Designation</span><span class="val">{{ doc.designation or "—" }}</span></div>
+      <div class="row"><span class="lbl">Dept</span>     <span class="val">{{ doc.department or "—" }}</span></div>
+      <div class="row"><span class="lbl">Role</span>     <span class="val">{{ doc.designation or "—" }}</span></div>
       <div class="row"><span class="lbl">Branch</span>   <span class="val">{{ doc.branch or "—" }}</span></div>
       {% if emp.grade_level %}
       <div class="row"><span class="lbl">Grade</span>    <span class="val">{{ emp.grade_level }}</span></div>
@@ -128,11 +120,6 @@ PAYSLIP_HTML = r"""
       <h2>Pay Period</h2>
       <div class="row"><span class="lbl">Start</span>    <span class="val">{{ frappe.utils.formatdate(doc.start_date, "dd MMM yyyy") }}</span></div>
       <div class="row"><span class="lbl">End</span>      <span class="val">{{ frappe.utils.formatdate(doc.end_date, "dd MMM yyyy") }}</span></div>
-      <div class="row"><span class="lbl">Working Days</span><span class="val">{{ "%g" | format(doc.total_working_days or 0) }}</span></div>
-      <div class="row"><span class="lbl">Payment Days</span><span class="val">{{ "%g" | format(doc.payment_days or 0) }}</span></div>
-      {% if doc.leave_without_pay %}
-      <div class="row"><span class="lbl">LWP Days</span> <span class="val" style="color:#b91c1c;">{{ "%g" | format(doc.leave_without_pay) }}</span></div>
-      {% endif %}
     </div>
   </div>
 
@@ -274,10 +261,10 @@ def upsert_print_format() -> None:
     pf.html                 = PAYSLIP_HTML
     pf.font                 = "Default"
     pf.font_size            = 10
-    pf.margin_top           = 12
-    pf.margin_bottom        = 12
-    pf.margin_left          = 12
-    pf.margin_right         = 12
+    pf.margin_top           = 8
+    pf.margin_bottom        = 8
+    pf.margin_left          = 8
+    pf.margin_right         = 8
     pf.default_print_language = "en"
     pf.show_section_headings  = 0
     pf.line_breaks            = 0
