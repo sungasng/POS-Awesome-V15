@@ -235,7 +235,7 @@ PAYSLIP_HTML = r"""
   {% endif %}
 
   <div class="footer">
-    Computer-generated payslip — no signature required. Queries: hr@sungas.ng
+    Computer-generated payslip — no signature required. Queries: hr@sungas.org
   </div>
 
 </div>
