@@ -50,45 +50,51 @@ PAYSLIP_HTML = r"""
 
 <style>
   .sungas-slip { font-family: "Helvetica", "Arial", sans-serif; color:#1f2937;
-                 font-size:9.5pt; line-height:1.3; max-width:380px; margin:0 auto; }
-  .sungas-slip h1 { font-size:12pt; margin:0; color:#0f3a52; letter-spacing:0.3px; }
-  .sungas-slip h2 { font-size:9pt; margin:0 0 3px 0; color:#0f3a52;
-                    text-transform:uppercase; letter-spacing:0.5px;
-                    border-bottom:1px solid #0f3a52; padding-bottom:2px; }
-  .sungas-slip .hdr { border-bottom:2px solid #0f3a52; padding-bottom:6px; margin-bottom:10px;
+                 font-size:8.5pt; line-height:1.2; max-width:380px; margin:0 auto; }
+  .sungas-slip h1 { font-size:11pt; margin:0; color:#0f3a52; letter-spacing:0.3px; }
+  .sungas-slip h2 { font-size:8pt; margin:0 0 2px 0; color:#0f3a52;
+                    text-transform:uppercase; letter-spacing:0.4px;
+                    border-bottom:1px solid #0f3a52; padding-bottom:1px; }
+  .sungas-slip .hdr { border-bottom:1.5px solid #0f3a52; padding-bottom:4px; margin-bottom:6px;
                       text-align:center; }
-  .sungas-slip .hdr-sub { font-size:8.5pt; color:#64748b; margin-top:2px; }
-  .sungas-slip .hdr-meta { font-size:8pt; color:#475569; margin-top:3px; }
-  .sungas-slip .grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:10px;
-                         margin-bottom:10px; font-size:8.5pt; }
-  .sungas-slip .grid-2 .row { display:grid; grid-template-columns:64px 1fr; padding:1px 0; }
+  .sungas-slip .hdr-sub { font-size:7.5pt; color:#64748b; margin-top:1px; }
+  .sungas-slip .hdr-meta { font-size:7pt; color:#475569; margin-top:2px; }
+  .sungas-slip .grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:8px;
+                         margin-bottom:6px; font-size:7.5pt; }
+  .sungas-slip .grid-2 .row { display:grid; grid-template-columns:54px 1fr; padding:0; }
   .sungas-slip .grid-2 .lbl { color:#64748b; }
   .sungas-slip .grid-2 .val { font-weight:600; }
-  .sungas-slip table.tbl { width:100%; border-collapse:collapse; margin-bottom:10px;
-                           font-size:9pt; }
-  .sungas-slip table.tbl td { padding:3px 6px; vertical-align:top; }
+  .sungas-slip table.tbl { width:100%; border-collapse:collapse; margin:0;
+                           font-size:8pt; }
+  .sungas-slip table.tbl td { padding:1.5px 4px; vertical-align:top; }
   .sungas-slip table.tbl td.amt { text-align:right; font-variant-numeric:tabular-nums; }
   .sungas-slip table.tbl tr.tbl-row td { border-bottom:1px dashed #e2e8f0; }
-  .sungas-slip table.tbl tr.tbl-total td { border-top:1.2px solid #0f3a52;
-                                            padding-top:5px; font-weight:700; }
-  .sungas-slip .net-box { background:#f0f7fc; border:1.2px solid #0f3a52;
-                          padding:8px 10px; margin:12px 0;
+  .sungas-slip table.tbl tr.tbl-total td { border-top:1px solid #0f3a52;
+                                            padding-top:3px; font-weight:700; }
+  .sungas-slip .ed-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px;
+                          margin-bottom:6px; }
+  .sungas-slip .net-box { background:#f0f7fc; border:1px solid #0f3a52;
+                          padding:5px 8px; margin:6px 0 3px 0;
                           display:flex; justify-content:space-between; align-items:center; }
-  .sungas-slip .net-box .lbl { font-size:9pt; color:#0f3a52; font-weight:600;
-                                text-transform:uppercase; letter-spacing:0.5px; }
-  .sungas-slip .net-box .val { font-size:13pt; font-weight:700; color:#0f3a52;
+  .sungas-slip .net-box .lbl { font-size:8pt; color:#0f3a52; font-weight:600;
+                                text-transform:uppercase; letter-spacing:0.4px; }
+  .sungas-slip .net-box .val { font-size:11pt; font-weight:700; color:#0f3a52;
                                 font-variant-numeric:tabular-nums; }
-  .sungas-slip .words { font-style:italic; color:#475569; margin-top:-6px;
-                        margin-bottom:12px; font-size:8.5pt; }
+  .sungas-slip .words { font-style:italic; color:#475569; margin:0 0 5px 0; font-size:7.5pt; }
   .sungas-slip .stat-block { background:#fafafa; border:1px solid #e2e8f0;
-                              padding:6px 8px; margin-bottom:10px; font-size:8.5pt;
+                              padding:3px 6px; margin-bottom:5px; font-size:7.5pt;
                               color:#475569; }
+  .sungas-slip .stat-block h2 { font-size:7.5pt; border:none; padding:0; margin-bottom:2px; color:#64748b; }
   .sungas-slip .stat-block table { width:100%; }
-  .sungas-slip .stat-block td { padding:2px 4px; }
+  .sungas-slip .stat-block td { padding:1px 3px; }
   .sungas-slip .stat-block td.amt { text-align:right; font-variant-numeric:tabular-nums; }
-  .sungas-slip .footer { font-size:7.5pt; color:#94a3b8; text-align:center;
-                          margin-top:12px; border-top:1px solid #e2e8f0; padding-top:6px;
-                          line-height:1.4; }
+  .sungas-slip .pay-details { font-size:7.5pt; display:grid; grid-template-columns:auto 1fr;
+                              gap:0 10px; margin-bottom:5px; }
+  .sungas-slip .pay-details .lbl { color:#64748b; }
+  .sungas-slip .pay-details .val { font-weight:600; font-family:monospace; }
+  .sungas-slip .footer { font-size:6.5pt; color:#94a3b8; text-align:center;
+                          margin-top:4px; border-top:1px solid #e2e8f0; padding-top:3px;
+                          line-height:1.3; }
 </style>
 
 <div class="sungas-slip">
@@ -123,56 +129,61 @@ PAYSLIP_HTML = r"""
     </div>
   </div>
 
-  <!-- EARNINGS -->
-  <h2>Earnings</h2>
-  <table class="tbl">
-    {% set ns_earn = namespace(rows=0) %}
-    {% for e in doc.earnings %}
-      {% if not e.statistical_component and not e.do_not_include_in_total and (e.amount or 0) > 0 %}
-        {% set ns_earn.rows = ns_earn.rows + 1 %}
-        <tr class="tbl-row">
-          <td>{{ e.salary_component }}</td>
-          <td class="amt">{{ "{:,.2f}".format(e.amount or 0) }}</td>
+  <!-- EARNINGS + DEDUCTIONS side-by-side -->
+  <div class="ed-grid">
+    <div>
+      <h2>Earnings</h2>
+      <table class="tbl">
+        {% set ns_earn = namespace(rows=0) %}
+        {% for e in doc.earnings %}
+          {% if not e.statistical_component and not e.do_not_include_in_total and (e.amount or 0) > 0 %}
+            {% set ns_earn.rows = ns_earn.rows + 1 %}
+            <tr class="tbl-row">
+              <td>{{ e.salary_component }}</td>
+              <td class="amt">{{ "{:,.2f}".format(e.amount or 0) }}</td>
+            </tr>
+          {% endif %}
+        {% endfor %}
+        {% if ns_earn.rows == 0 %}
+          <tr class="tbl-row"><td colspan="2" style="color:#94a3b8;font-style:italic;">No earnings.</td></tr>
+        {% endif %}
+        <tr class="tbl-total">
+          <td>Gross Pay</td>
+          <td class="amt">{{ "{:,.2f}".format(doc.gross_pay or 0) }}</td>
         </tr>
-      {% endif %}
-    {% endfor %}
-    {% if ns_earn.rows == 0 %}
-      <tr class="tbl-row"><td colspan="2" style="color:#94a3b8;font-style:italic;">No earnings this period.</td></tr>
-    {% endif %}
-    <tr class="tbl-total">
-      <td>Gross Pay</td>
-      <td class="amt">NGN {{ "{:,.2f}".format(doc.gross_pay or 0) }}</td>
-    </tr>
-  </table>
+      </table>
+    </div>
 
-  <!-- DEDUCTIONS -->
-  <h2>Deductions</h2>
-  <table class="tbl">
-    {% set ns_ded = namespace(rows=0) %}
-    {% for d in doc.deductions %}
-      {% if not d.statistical_component and not d.do_not_include_in_total and (d.amount or 0) > 0 %}
-        {% set ns_ded.rows = ns_ded.rows + 1 %}
-        <tr class="tbl-row">
-          <td>{{ d.salary_component }}</td>
-          <td class="amt">{{ "{:,.2f}".format(d.amount or 0) }}</td>
+    <div>
+      <h2>Deductions</h2>
+      <table class="tbl">
+        {% set ns_ded = namespace(rows=0) %}
+        {% for d in doc.deductions %}
+          {% if not d.statistical_component and not d.do_not_include_in_total and (d.amount or 0) > 0 %}
+            {% set ns_ded.rows = ns_ded.rows + 1 %}
+            <tr class="tbl-row">
+              <td>{{ d.salary_component }}</td>
+              <td class="amt">{{ "{:,.2f}".format(d.amount or 0) }}</td>
+            </tr>
+          {% endif %}
+        {% endfor %}
+        {% if doc.total_loan_repayment and doc.total_loan_repayment > 0 %}
+          <tr class="tbl-row">
+            <td>Total Loan</td>
+            <td class="amt">{{ "{:,.2f}".format(doc.total_loan_repayment) }}</td>
+          </tr>
+          {% set ns_ded.rows = ns_ded.rows + 1 %}
+        {% endif %}
+        {% if ns_ded.rows == 0 %}
+          <tr class="tbl-row"><td colspan="2" style="color:#94a3b8;font-style:italic;">No deductions.</td></tr>
+        {% endif %}
+        <tr class="tbl-total">
+          <td>Total Deduction</td>
+          <td class="amt">{{ "{:,.2f}".format((doc.total_deduction or 0) + (doc.total_loan_repayment or 0)) }}</td>
         </tr>
-      {% endif %}
-    {% endfor %}
-    {% if doc.total_loan_repayment and doc.total_loan_repayment > 0 %}
-      <tr class="tbl-row">
-        <td>Total Loan Repayment</td>
-        <td class="amt">{{ "{:,.2f}".format(doc.total_loan_repayment) }}</td>
-      </tr>
-      {% set ns_ded.rows = ns_ded.rows + 1 %}
-    {% endif %}
-    {% if ns_ded.rows == 0 %}
-      <tr class="tbl-row"><td colspan="2" style="color:#94a3b8;font-style:italic;">No deductions this period.</td></tr>
-    {% endif %}
-    <tr class="tbl-total">
-      <td>Total Deduction</td>
-      <td class="amt">NGN {{ "{:,.2f}".format((doc.total_deduction or 0) + (doc.total_loan_repayment or 0)) }}</td>
-    </tr>
-  </table>
+      </table>
+    </div>
+  </div>
 
   <!-- NET PAY -->
   <div class="net-box">
@@ -180,7 +191,7 @@ PAYSLIP_HTML = r"""
     <span class="val">NGN {{ "{:,.2f}".format(doc.net_pay or 0) }}</span>
   </div>
   {% if doc.total_in_words %}
-    <div class="words"><strong>In words:</strong> {{ doc.total_in_words }}</div>
+    <div class="words"><em>{{ doc.total_in_words }}</em></div>
   {% endif %}
 
   <!-- EMPLOYER CONTRIBUTIONS (statistical / company-paid) -->
@@ -189,9 +200,7 @@ PAYSLIP_HTML = r"""
   {% for d in doc.deductions %}{% if d.statistical_component and (d.amount or 0) > 0 %}{% set _ = has_stat.append(1) %}{% endif %}{% endfor %}
   {% if has_stat %}
   <div class="stat-block">
-    <h2 style="border:none;color:#475569;font-size:9.5pt;margin-bottom:6px;">
-      Employer Contributions On Your Behalf (Not deducted from Net Pay)
-    </h2>
+    <h2>Employer Contributions (not deducted from Net)</h2>
     <table>
       {% for e in doc.earnings %}
         {% if e.statistical_component and (e.amount or 0) > 0 %}
@@ -215,26 +224,23 @@ PAYSLIP_HTML = r"""
 
   <!-- PAYMENT DETAILS -->
   {% if doc.bank_name or doc.bank_account_no %}
-  <h2>Payment Details</h2>
-  <table class="tbl">
+  <div class="pay-details">
     {% if doc.bank_name %}
-    <tr class="tbl-row"><td>Bank</td><td class="amt" style="text-align:left;">{{ doc.bank_name }}</td></tr>
+      <span class="lbl">Bank:</span><span class="val" style="font-family:inherit;">{{ doc.bank_name }}</span>
     {% endif %}
     {% if doc.bank_account_no %}
       {% set acct = doc.bank_account_no | string %}
       {% set masked = "•••••• " + acct[-4:] if acct|length >= 4 else acct %}
-    <tr class="tbl-row"><td>Account Number</td><td class="amt" style="text-align:left;font-family:monospace;">{{ masked }}</td></tr>
+      <span class="lbl">Account:</span><span class="val">{{ masked }}</span>
     {% endif %}
     {% if doc.mode_of_payment %}
-    <tr class="tbl-row"><td>Mode</td><td class="amt" style="text-align:left;">{{ doc.mode_of_payment }}</td></tr>
+      <span class="lbl">Mode:</span><span class="val" style="font-family:inherit;">{{ doc.mode_of_payment }}</span>
     {% endif %}
-  </table>
+  </div>
   {% endif %}
 
   <div class="footer">
-    This is a computer-generated payslip and does not require a signature.<br>
-    For payroll queries, contact HR at hr@sungas.ng.<br>
-    Generated: {{ frappe.utils.formatdate(frappe.utils.nowdate(), "dd MMM yyyy") }}
+    Computer-generated payslip — no signature required. Queries: hr@sungas.ng
   </div>
 
 </div>
@@ -278,20 +284,58 @@ def upsert_print_format() -> None:
 
 
 def set_as_default() -> None:
-    """Optional convenience: flip Payroll Settings.salary_slip_print_format."""
+    """Make 'Sungas Payslip' the default in Desk's Print dropdown for Salary Slip.
+
+    Two layers required:
+      1. Property Setter on Salary Slip.default_print_format -> controls the
+         Desk Print dropdown default (what users actually see).
+      2. Payroll Settings.salary_slip_print_format -> controls the format used
+         when HRMS emails slips to employees.
+    """
+    # ---- 1. Property Setter (Desk Print dropdown default) ----
+    ps_name = "Salary Slip-main-default_print_format"
     try:
-        ps = frappe.get_single("Payroll Settings")
-        old = ps.get("salary_slip_print_format") or ""
-        if old != FORMAT_NAME:
-            ps.salary_slip_print_format = FORMAT_NAME
+        if frappe.db.exists("Property Setter", ps_name):
+            ps = frappe.get_doc("Property Setter", ps_name)
+            old = ps.value
+            ps.value = FORMAT_NAME
             ps.flags.ignore_permissions = True
             ps.save()
+        else:
+            old = "<none>"
+            ps = frappe.get_doc({
+                "doctype":      "Property Setter",
+                "name":         ps_name,
+                "doctype_or_field": "DocType",
+                "doc_type":     "Salary Slip",
+                "property":     "default_print_format",
+                "property_type": "Data",
+                "value":        FORMAT_NAME,
+            })
+            ps.flags.ignore_permissions = True
+            ps.insert()
+        frappe.db.commit()
+        # Bust the meta cache so the Print dropdown shows the new default immediately
+        frappe.clear_cache(doctype="Salary Slip")
+        print(f"  + Property Setter Salary Slip.default_print_format: {old!r} -> {FORMAT_NAME!r}")
+    except Exception as e:
+        print(f"  ! Could not set Property Setter ({e!r}). Set manually: ")
+        print("    Desk -> Customize Form -> Salary Slip -> Default Print Format")
+
+    # ---- 2. Payroll Settings (used when emailing slips) ----
+    try:
+        pset = frappe.get_single("Payroll Settings")
+        old = pset.get("salary_slip_print_format") or ""
+        if old != FORMAT_NAME:
+            pset.salary_slip_print_format = FORMAT_NAME
+            pset.flags.ignore_permissions = True
+            pset.save()
             frappe.db.commit()
             print(f"  + Payroll Settings.salary_slip_print_format: {old!r} -> {FORMAT_NAME!r}")
         else:
             print(f"  = Payroll Settings already set to {FORMAT_NAME!r}")
     except Exception as e:
-        print(f"  ! Could not auto-set default ({e!r}). Set manually in Desk -> Payroll Settings.")
+        print(f"  ! Could not set Payroll Settings ({e!r}).")
 
 
 def main() -> None:
