@@ -59,11 +59,11 @@ PAYSLIP_HTML = r"""
                       text-align:center; }
   .sungas-slip .hdr-sub { font-size:7.5pt; color:#64748b; margin-top:1px; }
   .sungas-slip .hdr-meta { font-size:7pt; color:#475569; margin-top:2px; }
-  .sungas-slip .grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:8px;
-                         margin-bottom:6px; font-size:7.5pt; }
-  .sungas-slip .grid-2 .row { display:grid; grid-template-columns:54px 1fr; padding:0; }
-  .sungas-slip .grid-2 .lbl { color:#64748b; }
-  .sungas-slip .grid-2 .val { font-weight:600; }
+  .sungas-slip .info-grid { display:grid; grid-template-columns:1fr 1fr; gap:0 10px;
+                            margin-bottom:6px; font-size:7.5pt; }
+  .sungas-slip .info-grid .cell { display:grid; grid-template-columns:54px 1fr; padding:0; }
+  .sungas-slip .info-grid .lbl { color:#64748b; }
+  .sungas-slip .info-grid .val { font-weight:600; }
   .sungas-slip table.tbl { width:100%; border-collapse:collapse; margin:0;
                            font-size:8pt; }
   .sungas-slip table.tbl td { padding:1.5px 4px; vertical-align:top; }
@@ -109,24 +109,19 @@ PAYSLIP_HTML = r"""
     </div>
   </div>
 
-  <!-- EMPLOYEE + PERIOD -->
-  <div class="grid-2">
-    <div>
-      <h2>Employee</h2>
-      <div class="row"><span class="lbl">Name</span>     <span class="val">{{ doc.employee_name }}</span></div>
-      <div class="row"><span class="lbl">Staff ID</span> <span class="val">{{ doc.employee }}</span></div>
-      <div class="row"><span class="lbl">Dept</span>     <span class="val">{{ doc.department or "—" }}</span></div>
-      <div class="row"><span class="lbl">Role</span>     <span class="val">{{ doc.designation or "—" }}</span></div>
-      <div class="row"><span class="lbl">Branch</span>   <span class="val">{{ doc.branch or "—" }}</span></div>
-      {% if emp.grade_level %}
-      <div class="row"><span class="lbl">Grade</span>    <span class="val">{{ emp.grade_level }}</span></div>
-      {% endif %}
-    </div>
-    <div>
-      <h2>Pay Period</h2>
-      <div class="row"><span class="lbl">Start</span>    <span class="val">{{ frappe.utils.formatdate(doc.start_date, "dd MMM yyyy") }}</span></div>
-      <div class="row"><span class="lbl">End</span>      <span class="val">{{ frappe.utils.formatdate(doc.end_date, "dd MMM yyyy") }}</span></div>
-    </div>
+  <!-- EMPLOYEE + PERIOD: single block, 2-col data grid -->
+  <h2>Employee &amp; Pay Period</h2>
+  <div class="info-grid">
+    <div class="cell"><span class="lbl">Name</span>    <span class="val">{{ doc.employee_name }}</span></div>
+    <div class="cell"><span class="lbl">Staff ID</span><span class="val">{{ doc.employee }}</span></div>
+    <div class="cell"><span class="lbl">Dept</span>    <span class="val">{{ doc.department or "—" }}</span></div>
+    <div class="cell"><span class="lbl">Role</span>    <span class="val">{{ doc.designation or "—" }}</span></div>
+    <div class="cell"><span class="lbl">Branch</span>  <span class="val">{{ doc.branch or "—" }}</span></div>
+    {% if emp.grade_level %}
+    <div class="cell"><span class="lbl">Grade</span>   <span class="val">{{ emp.grade_level }}</span></div>
+    {% endif %}
+    <div class="cell"><span class="lbl">Start</span>   <span class="val">{{ frappe.utils.formatdate(doc.start_date, "dd MMM yyyy") }}</span></div>
+    <div class="cell"><span class="lbl">End</span>     <span class="val">{{ frappe.utils.formatdate(doc.end_date, "dd MMM yyyy") }}</span></div>
   </div>
 
   <!-- EARNINGS + DEDUCTIONS side-by-side -->
@@ -267,10 +262,10 @@ def upsert_print_format() -> None:
     pf.html                 = PAYSLIP_HTML
     pf.font                 = "Default"
     pf.font_size            = 10
-    pf.margin_top           = 8
-    pf.margin_bottom        = 8
-    pf.margin_left          = 8
-    pf.margin_right         = 8
+    pf.margin_top           = 4
+    pf.margin_bottom        = 4
+    pf.margin_left          = 4
+    pf.margin_right         = 4
     pf.default_print_language = "en"
     pf.show_section_headings  = 0
     pf.line_breaks            = 0
