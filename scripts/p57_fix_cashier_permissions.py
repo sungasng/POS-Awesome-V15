@@ -13,6 +13,8 @@ Required roles for a working POS Awesome cashier (per assign_cashier_roles.py):
 
 Parameters (environment variables):
     USERS           Comma-separated list of usernames/emails. Default = "peace.effiong@sungas.org"
+                    Special value "AUTO" -> auto-scan: every enabled user with a POS
+                    Profile in their User Permissions OR with role 'LPG POS User'.
     LIVE            "1" to actually assign the Role Profile. Default "0" (dry-run).
 
 Run (replace SHA):
@@ -42,9 +44,22 @@ def main() -> None:
 
     live = os.environ.get("LIVE", "0") == "1"
     users_csv = os.environ.get("USERS", "peace.effiong@sungas.org").strip()
-    targets = [u.strip() for u in users_csv.split(",") if u.strip()]
+    if users_csv.upper() == "AUTO":
+        # Auto-discover: users with POS Profile permission OR with role 'LPG POS User'
+        pos_perm_users = [r["user"] for r in frappe.db.sql("""
+            select distinct user from `tabUser Permission`
+            where allow = 'POS Profile'
+        """, as_dict=True)]
+        role_users = [r["parent"] for r in frappe.db.sql("""
+            select distinct parent from `tabHas Role` where role = 'LPG POS User' and parenttype='User'
+        """, as_dict=True)]
+        targets = sorted(set(pos_perm_users + role_users))
+        # Exclude system users
+        targets = [u for u in targets if u not in ("Administrator", "Guest")]
+    else:
+        targets = [u.strip() for u in users_csv.split(",") if u.strip()]
     p(f"- Mode: {'LIVE (writes)' if live else 'DRY-RUN'}")
-    p(f"- Users: {targets}")
+    p(f"- Users ({len(targets)}): {targets[:20]}{' ...' if len(targets) > 20 else ''}")
     p("")
 
     if not frappe.db.exists("Role Profile", TARGET_ROLE_PROFILE):
