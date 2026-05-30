@@ -13,7 +13,7 @@ Run (replace SHA with the commit you want pinned):
     SHA=<commit>
     export MONTH_END=2026-05-31           # optional
     curl -fsSL "https://raw.githubusercontent.com/sungasng/POS-Awesome-V15/$SHA/scripts/p57_step9a_monthclose_precheck.py" -o /tmp/p57pre.py
-    bench --site sungasmis.v.frappe.cloud execute "(exec(open('/tmp/p57pre.py').read()) or (lambda **k: None))"
+    bench --site sungasmis.v.frappe.cloud execute "(exec(open('/tmp/p57pre.py').read(), globals()) or (lambda **k: None))"
 
 Output: stdout + /tmp/p57_monthclose_precheck.md
 """

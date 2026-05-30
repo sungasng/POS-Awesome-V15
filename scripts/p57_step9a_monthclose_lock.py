@@ -25,10 +25,10 @@ Run (replace SHA):
     export MONTH_END=2026-05-31
     # 1) DRY-RUN first (no writes)
     curl -fsSL "https://raw.githubusercontent.com/sungasng/POS-Awesome-V15/$SHA/scripts/p57_step9a_monthclose_lock.py" -o /tmp/p57lock.py
-    bench --site sungasmis.v.frappe.cloud execute "(exec(open('/tmp/p57lock.py').read()) or (lambda **k: None))"
+    bench --site sungasmis.v.frappe.cloud execute "(exec(open('/tmp/p57lock.py').read(), globals()) or (lambda **k: None))"
     # 2) If dry-run looks correct, run LIVE
     export LIVE=1
-    bench --site sungasmis.v.frappe.cloud execute "(exec(open('/tmp/p57lock.py').read()) or (lambda **k: None))"
+    bench --site sungasmis.v.frappe.cloud execute "(exec(open('/tmp/p57lock.py').read(), globals()) or (lambda **k: None))"
 
 Output: stdout + /tmp/p57_monthclose_lock.log
 """

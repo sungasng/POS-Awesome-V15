@@ -9,7 +9,7 @@ recommended remediation.
 Run:
     SHA=<commit>
     curl -fsSL "https://raw.githubusercontent.com/sungasng/POS-Awesome-V15/$SHA/scripts/p57_step9_inventory_audit.py" -o /tmp/p57i.py
-    bench --site sungasmis.v.frappe.cloud execute "exec(open('/tmp/p57i.py').read())"
+    bench --site sungasmis.v.frappe.cloud execute "(exec(open('/tmp/p57i.py').read(), globals()) or (lambda **k: None))"
 
 Output: stdout + /tmp/p57_inventory_audit.md
 """
