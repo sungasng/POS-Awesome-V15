@@ -141,35 +141,59 @@ def main() -> None:
               f"{se_drafts} draft Stock Entry/Entries on or before month-end.")
     p("")
 
-    # ---- 7. POS Closing Entry coverage ----
-    p("## 7. POS Closing Entry coverage")
+    # ---- 7. POS Closing Shift coverage (POS Awesome) ----
+    p("## 7. POS Closing Shift coverage (POS Awesome)")
     active_profiles = frappe.db.sql("""
         select name from `tabPOS Profile` where disabled = 0
     """, as_dict=True)
     profile_names = [r["name"] for r in active_profiles]
     p(f"- Active POS Profiles: **{len(profile_names)}**")
+
+    # Anything that is still an OPEN shift inside the period is a blocker --
+    # the shift must be closed before the month can be locked.
+    open_shifts = frappe.db.sql("""
+        select name, pos_profile, period_start_date, user
+        from `tabPOS Opening Shift`
+        where docstatus = 1
+          and status = 'Open'
+          and date(period_start_date) <= %s
+        order by period_start_date
+    """, (month_end,), as_dict=True)
+    if open_shifts:
+        block("POS Opening Shift",
+              f"{len(open_shifts)} POS Opening Shift(s) still Open with period_start_date <= "
+              f"{month_end}. Each must be closed via POS Awesome > Close Shift.")
+        p(f"- **{len(open_shifts)} OPEN shift(s) blocking:**")
+        for s in open_shifts[:10]:
+            p(f"  - {s['name']} | {s['pos_profile']} | start={s['period_start_date']} | user={s['user']}")
+    else:
+        p("- No open shifts inside the period")
+
+    # Cross-check: every profile that posted POS Invoices in the month should
+    # have at least one submitted Closing Shift that covers the period.
     profiles_without_close = []
     for prof in profile_names:
-        n = frappe.db.count("POS Closing Entry", {
-            "pos_profile": prof,
-            "docstatus": 1,
-            "period_end_date": [">=", month_start],
-        })
-        # A profile that was active during the month and posted any POS Invoice
-        # in the window MUST have a Closing Entry by period_end_date <= month_end + grace.
         had_sales = frappe.db.exists("POS Invoice", {
             "pos_profile": prof,
             "docstatus": 1,
             "posting_date": ["between", [month_start, month_end]],
         })
-        if had_sales and n == 0:
+        if not had_sales:
+            continue
+        n = frappe.db.count("POS Closing Shift", {
+            "pos_profile": prof,
+            "docstatus": 1,
+            "period_end_date": ["between", [month_start, month_end]],
+        })
+        if n == 0:
             profiles_without_close.append(prof)
     if profiles_without_close:
-        block("POS Closing Entry",
+        block("POS Closing Shift",
               f"{len(profiles_without_close)} active POS Profile(s) had sales in month "
-              f"but no Closing Entry: " + ", ".join(profiles_without_close[:10]))
-    else:
-        p("- **PASS** -- every active profile with sales has at least one Closing Entry in the period")
+              f"but no submitted Closing Shift with period_end_date in month: "
+              + ", ".join(profiles_without_close[:10]))
+    elif not open_shifts:
+        p("- **PASS** -- every active profile with sales has at least one Closing Shift in the period")
     p("")
 
     # ---- 8. Repost Item Valuation backlog ----

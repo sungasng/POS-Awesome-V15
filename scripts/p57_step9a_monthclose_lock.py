@@ -69,7 +69,16 @@ def _precheck_blockers(month_end: date, month_start: date) -> list[str]:
         if n:
             blockers.append(f"{n} draft {doctype}(s) on or before {month_end}")
 
-    # POS Closing Entry coverage
+    # POS Awesome: open shifts in period are blockers
+    open_shifts = frappe.db.sql("""
+        select name from `tabPOS Opening Shift`
+        where docstatus = 1 and status = 'Open'
+          and date(period_start_date) <= %s
+    """, (month_end,), as_dict=True)
+    if open_shifts:
+        blockers.append(f"{len(open_shifts)} POS Opening Shift(s) still Open with start <= {month_end}")
+
+    # POS Closing Shift coverage
     profiles = [r["name"] for r in frappe.db.sql(
         "select name from `tabPOS Profile` where disabled = 0", as_dict=True)]
     no_close = []
@@ -79,13 +88,13 @@ def _precheck_blockers(month_end: date, month_start: date) -> list[str]:
             "posting_date": ["between", [month_start, month_end]]})
         if not had_sales:
             continue
-        n = frappe.db.count("POS Closing Entry", {
+        n = frappe.db.count("POS Closing Shift", {
             "pos_profile": prof, "docstatus": 1,
-            "period_end_date": [">=", month_start]})
+            "period_end_date": ["between", [month_start, month_end]]})
         if n == 0:
             no_close.append(prof)
     if no_close:
-        blockers.append(f"{len(no_close)} POS Profile(s) with sales lack a Closing Entry: "
+        blockers.append(f"{len(no_close)} POS Profile(s) with sales lack a Closing Shift in month: "
                         + ", ".join(no_close[:5]))
 
     # Repost queue
