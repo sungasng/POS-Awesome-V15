@@ -128,23 +128,21 @@ doc_events = {
 # Scheduled Tasks
 # ---------------
 
-# scheduler_events = {
-# 	"all": [
-# 		"posawesome.tasks.all"
-# 	],
-# 	"daily": [
-# 		"posawesome.tasks.daily"
-# 	],
-# 	"hourly": [
-# 		"posawesome.tasks.hourly"
-# 	],
-# 	"weekly": [
-# 		"posawesome.tasks.weekly"
-# 	]
-# 	"monthly": [
-# 		"posawesome.tasks.monthly"
-# 	]
-# }
+scheduler_events = {
+    # Phase 5.7: every 5 min, retry POS invoices stuck in Draft >10 min
+    "cron": {
+        "*/5 * * * *": [
+            "posawesome.posawesome.tasks.retry_stuck_pos_invoices",
+        ],
+    },
+    # Phase 5.7: weekly SLE health check (Sundays 02:00 site-local)
+    "weekly": [
+        "posawesome.posawesome.tasks.sle_health_check",
+    ],
+}
+
+# Legacy stub kept for reference:
+# scheduler_events = {"all": [...], "daily": [...], "hourly": [...]}
 
 # Testing
 # -------

@@ -1123,10 +1123,44 @@ def submit_in_background_job(kwargs):
         invoice_doc.flags.ignore_permissions = True
         frappe.flags.ignore_account_permission = True
 
-        # Re-run validations that may be impacted while queued (stock, credit limits)
-        _validate_stock_on_invoice(invoice_doc)
-        if hasattr(invoice_doc, "validate_credit_limit"):
-            invoice_doc.validate_credit_limit()
+        # ---- Phase 5.7 hardening: row-lock + savepoint + deadlock retry ----
+        # Race: two cashiers sell the last unit of an item from the same
+        # warehouse simultaneously. Without a row-lock, both pass _validate_stock
+        # and both submit -> oversell.
+        # Fix: SELECT ... FOR UPDATE on the (item, warehouse) Bin rows used
+        # by this invoice. MariaDB holds the row lock until commit, so the
+        # second queued job blocks until the first finishes, then re-reads
+        # the now-decremented stock and either passes or fails.
+        from pymysql.err import OperationalError as _MySQLOpErr  # noqa: PLC0415
+        _bin_keys = [(it.item_code, it.warehouse) for it in invoice_doc.items
+                     if it.item_code and it.warehouse]
+        _deadlock_tries = 0
+        while True:
+            try:
+                frappe.db.savepoint("posa_submit")
+                # Lock the Bin rows for every (item, warehouse) in this invoice.
+                # If a Bin row doesn't exist yet, this is a no-op (stock will
+                # be validated by _validate_stock_on_invoice below anyway).
+                for _ic, _wh in _bin_keys:
+                    frappe.db.sql(
+                        "select name from `tabBin` "
+                        "where item_code=%s and warehouse=%s for update",
+                        (_ic, _wh),
+                    )
+                # Re-run stock + credit validation INSIDE the lock
+                _validate_stock_on_invoice(invoice_doc)
+                if hasattr(invoice_doc, "validate_credit_limit"):
+                    invoice_doc.validate_credit_limit()
+                break
+            except _MySQLOpErr as oe:
+                # Deadlock (1213) or lock-wait timeout (1205) -> retry up to 3x
+                if oe.args and oe.args[0] in (1205, 1213) and _deadlock_tries < 3:
+                    _deadlock_tries += 1
+                    frappe.db.sql("rollback to savepoint posa_submit")
+                    import time as _t  # noqa: PLC0415
+                    _t.sleep(0.1 * (2 ** _deadlock_tries))
+                    continue
+                raise
 
         invoice_doc.remarks = _build_invoice_remarks(invoice_doc)
 
