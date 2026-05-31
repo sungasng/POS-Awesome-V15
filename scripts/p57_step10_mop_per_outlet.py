@@ -31,12 +31,37 @@ COMPANY = "SUNGAS COMPANY LIMITED"
 COMPANY_ABBR = "SCL"
 MODES = ["Cash", "POS", "Transfer"]
 MODE_TYPE = {"Cash": "Cash", "POS": "Bank", "Transfer": "Bank"}
-ACC_PREFIX = {
-    "Cash": "1101 - Cash Sales",
-    "POS": "1503 - POS Incoming",
-    "Transfer": "1511 - Incoming Transfer",
+# Account-name keyword per mode -- looked up by SQL LIKE since codes vary
+ACC_KEYWORD = {
+    "Cash": "Cash Sales",
+    "POS": "POS Incoming",
+    "Transfer": "Incoming Transfer",
+}
+# Outlet name variants used in GL Account naming vs POS Profile warehouse
+OUTLET_ALIAS = {
+    "Iju-Otta": ["Iju-Otta", "Iju-Ota"],
+    "Ebutte": ["Ebutte", "Ebute"],
+    "Osi-Otta": ["Osi-Otta", "Osi-Ota"],
 }
 DISABLE_MOPS = ["Cash", "POS", "Transfer", "Bank Draft", "Cheque", "Credit Card", "Wire Transfer"]
+
+
+def _resolve_account(mode: str, outlet: str) -> str | None:
+    """Find the existing GL account for (mode, outlet) using SQL LIKE
+    on the keyword + any spelling variant of the outlet name."""
+    kw = ACC_KEYWORD[mode]
+    variants = OUTLET_ALIAS.get(outlet, [outlet])
+    for v in variants:
+        pattern = f"% - {kw} - {v} - {COMPANY_ABBR}"
+        rows = frappe.db.sql("""
+            select name from `tabAccount`
+            where company = %s and disabled = 0 and is_group = 0
+              and name like %s
+            limit 1
+        """, (COMPANY, pattern), as_dict=True)
+        if rows:
+            return rows[0]["name"]
+    return None
 
 
 # ---------------- helpers ----------------
@@ -47,8 +72,9 @@ def _outlet_from_warehouse(wh: str | None) -> str | None:
     return wh.rsplit(" - ", 1)[0].strip() if " - " in wh else wh.strip()
 
 
-def _expected_account(mode: str, outlet: str) -> str:
-    return f"{ACC_PREFIX[mode]} - {outlet} - {COMPANY_ABBR}"
+def _expected_account(mode: str, outlet: str) -> str | None:
+    """Returns the resolved account name (existing in CoA), or None if not found."""
+    return _resolve_account(mode, outlet)
 
 
 def _mop_name(mode: str, outlet: str) -> str:
@@ -86,22 +112,21 @@ def wave1():
     p(f"- Distinct outlets: **{len(outlet_map)}**: {sorted(outlet_map.keys())}"); p("")
 
     p("## Account availability check")
-    p("| Outlet | Mode | Expected account | Exists? |")
-    p("|--------|------|------------------|---------|")
+    p("| Outlet | Mode | Resolved account | Status |")
+    p("|--------|------|------------------|--------|")
     missing_accts = []
     for outlet in sorted(outlet_map.keys()):
         for mode in MODES:
             acct = _expected_account(mode, outlet)
-            exists = frappe.db.exists("Account", acct)
-            mark = ":white_check_mark:" if exists else ":x:"
-            p(f"| {outlet} | {mode} | {acct} | {mark} |")
-            if not exists:
-                missing_accts.append((outlet, mode, acct))
+            if acct:
+                p(f"| {outlet} | {mode} | `{acct}` | :white_check_mark: |")
+            else:
+                p(f"| {outlet} | {mode} | (none found) | :x: |")
+                missing_accts.append((outlet, mode))
     p("")
     if missing_accts:
-        p(f"**{len(missing_accts)} account(s) missing.** Either:")
-        p("- create them in the CoA, or")
-        p("- adjust the ACC_PREFIX dict in this script if your naming convention is different.")
+        p(f"**{len(missing_accts)} account(s) not found.** Check the spelling variants "
+          f"in OUTLET_ALIAS or add the missing accounts in CoA before continuing.")
         p("")
 
     p("## Mode of Payment plan")
@@ -112,7 +137,7 @@ def wave1():
     for outlet in sorted(outlet_map.keys()):
         for mode in MODES:
             mop = _mop_name(mode, outlet)
-            acct = _expected_account(mode, outlet)
+            acct = _expected_account(mode, outlet) or "(account missing)"
             mop_exists = frappe.db.exists("Mode of Payment", mop)
             if mop_exists:
                 # check if linked already
@@ -174,8 +199,8 @@ def wave2(live: bool):
         for mode in MODES:
             mop = _mop_name(mode, outlet)
             acct = _expected_account(mode, outlet)
-            if not frappe.db.exists("Account", acct):
-                plan.append((outlet, mode, mop, acct, "SKIP: account missing"))
+            if not acct:
+                plan.append((outlet, mode, mop, "(none)", "SKIP: account not found"))
                 continue
             plan.append((outlet, mode, mop, acct, "create_or_update"))
 
@@ -346,7 +371,7 @@ def wave5(live: bool):
     p(f"- Mode: {'LIVE' if live else 'DRY-RUN'}"); p("")
 
     wrong = "1503 - POS Incoming - Pedro - SCL"
-    right = "1503 - POS Incoming - Ikeja - SCL"
+    right = _resolve_account("POS", "Ikeja") or ""
 
     # Confirm both accounts exist
     if not frappe.db.exists("Account", wrong):
