@@ -180,11 +180,11 @@ def main() -> None:
         })
         if not had_sales:
             continue
-        n = frappe.db.count("POS Closing Shift", {
-            "pos_profile": prof,
-            "docstatus": 1,
-            "period_end_date": ["between", [month_start, month_end]],
-        })
+        n = frappe.db.sql("""
+            select count(*) from `tabPOS Closing Shift`
+            where pos_profile = %s and docstatus = 1
+              and date(period_end_date) between %s and %s
+        """, (prof, month_start, month_end))[0][0]
         if n == 0:
             profiles_without_close.append(prof)
     if profiles_without_close:
