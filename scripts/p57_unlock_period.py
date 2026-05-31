@@ -21,7 +21,11 @@ def main():
     L = []
     p = L.append
     live = os.environ.get("LIVE", "0") == "1"
-    target = os.environ.get("TARGET", "0001-01-01").strip()
+    # Safe distant-past date (Python date can't represent year 0001 cleanly, and
+    # writing it via doc.save() causes Frappe to store NULL, which then breaks
+    # ERPNext's check_stock_frozen_date() comparison). 1900-01-01 is the lowest
+    # safe value.
+    target = os.environ.get("TARGET", "1900-01-01").strip()
 
     p("# p57: Temporarily unlock period (revert freeze dates)")
     p("")
