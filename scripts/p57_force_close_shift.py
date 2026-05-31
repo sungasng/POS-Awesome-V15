@@ -42,7 +42,7 @@ from datetime import datetime
 import os
 import frappe
 
-SHIFT = "POSA-OS-26-0000003"
+SHIFT = os.environ.get("SHIFT", "POSA-OS-26-0000003")
 
 
 def _env_float(name: str, default: float | None = None) -> float | None:

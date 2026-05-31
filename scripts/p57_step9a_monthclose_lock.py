@@ -135,6 +135,22 @@ def main() -> None:
         p(f"**ABORT** -- MONTH_END `{month_end}` is in the future. Refusing to lock a period that hasn't ended.")
         _save(L)
         return
+    # New guardrail (Q2-d): refuse to lock on the last day of the target month
+    # itself, because same-day POS activity (invoices dated month_end) gets
+    # trapped INSIDE the freeze window (ERPNext freeze comparison is inclusive).
+    # Standard finance practice: run the lock on month_end + 1 or later.
+    if today <= month_end and not force:
+        p(f"**ABORT** -- today (`{today}`) is on/before MONTH_END (`{month_end}`).")
+        p("")
+        p("Locking on the last day of a month traps same-day activity inside the freeze")
+        p("window because ERPNext's freeze comparison is inclusive (`<=`). Wait until the")
+        p("first working day of the following month, then re-run.")
+        p("")
+        p("If you understand this risk and need to override (e.g. parallel-run testing),")
+        p("re-run with `FORCE=1` AND ensure no further activity on/before MONTH_END is")
+        p("possible (all POS shifts closed, all draft invoices submitted).")
+        _save(L)
+        return
     if (today - month_end).days > 90:
         p(f"**ABORT** -- MONTH_END `{month_end}` is more than 90 days in the past ({(today - month_end).days} days). "
           f"Locking that far back requires manual intervention by HOD Finance + IT.")
