@@ -40,27 +40,27 @@ COMPANY_ABBR = "SCL"
 
 BUCKETS = [
     {
-        "code": "2602",
+        "code": "2608",
         "name": "Cash Suspense - Cashier Recovery",
-        "full": f"2602 - Cash Suspense - Cashier Recovery - {COMPANY_ABBR}",
+        "full": f"2608 - Cash Suspense - Cashier Recovery - {COMPANY_ABBR}",
         "root_type": "Asset",
         "account_type": "Receivable",
         "env_parent": "PARENT_RECEIVABLE",
         "default_parent": "2600 - 2699 - Other receivables - SCL",
     },
     {
-        "code": "6202",
+        "code": "6224",
         "name": "Cash Overage Suspense",
-        "full": f"6202 - Cash Overage Suspense - {COMPANY_ABBR}",
+        "full": f"6224 - Cash Overage Suspense - {COMPANY_ABBR}",
         "root_type": "Liability",
         "account_type": "Payable",
         "env_parent": "PARENT_LIABILITY",
         "default_parent": "6200 - Other Payables - SCL",
     },
     {
-        "code": "9202",
+        "code": "9246",
         "name": "Cash Shortage - Written Off",
-        "full": f"9202 - Cash Shortage - Written Off - {COMPANY_ABBR}",
+        "full": f"9246 - Cash Shortage - Written Off - {COMPANY_ABBR}",
         "root_type": "Expense",
         "account_type": "Expense Account",
         "env_parent": "PARENT_EXPENSE",
@@ -305,8 +305,8 @@ def wave3_backfill(L, live: bool):
     p("")
 
     # Pre-check accounts exist
-    shortage_acct = next(b["full"] for b in BUCKETS if b["code"] == "2602")
-    overage_acct = next(b["full"] for b in BUCKETS if b["code"] == "6202")
+    shortage_acct = next(b["full"] for b in BUCKETS if b["code"] == "2608")
+    overage_acct = next(b["full"] for b in BUCKETS if b["code"] == "6224")
     if not frappe.db.exists("Account", shortage_acct):
         p(f"**ABORT** -- `{shortage_acct}` does not exist (run WAVE 2 first)")
         return
