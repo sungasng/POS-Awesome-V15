@@ -78,6 +78,33 @@ def _find_corrected_account(orig_acc: str, expected_branch: str) -> str | None:
     return rows[0]["name"] if rows else None
 
 
+def _detect_payment_child() -> tuple[str | None, str | None]:
+    """Look at a real POS Profile's payments table to learn the child doctype + account field."""
+    sample = frappe.db.get_value("POS Profile", {"disabled": 0}, "name")
+    if not sample:
+        return None, None
+    pp = frappe.get_doc("POS Profile", sample)
+    # POS Profile has a `payments` child table -- inspect first row's doctype + fields
+    rows = getattr(pp, "payments", None)
+    if not rows:
+        return None, None
+    first = rows[0]
+    child_dt = first.doctype
+    # find field that looks like an account link
+    for fn in ("account", "default_account", "mop_account"):
+        if hasattr(first, fn):
+            return child_dt, fn
+    # fall back: any DocField on the child whose options == "Account"
+    df_rows = frappe.db.sql("""
+        select fieldname from `tabDocField`
+        where parent = %s and (options = 'Account' or fieldtype = 'Link' and options like '%%Account%%')
+        limit 1
+    """, (child_dt,), as_dict=True)
+    if df_rows:
+        return child_dt, df_rows[0]["fieldname"]
+    return child_dt, None
+
+
 def main():
     L = []
     p = L.append
@@ -93,14 +120,21 @@ def main():
         order by name
     """, as_dict=True)
     p(f"- Active POS Profiles: **{len(profiles)}**")
+
+    # Determine the actual child doctype + account field POS Awesome uses on this site
+    child_dt, acct_field = _detect_payment_child()
+    if not child_dt:
+        p("**ABORT** -- could not detect POS Profile payment child table.")
+        _save(L); return
+    p(f"- Payment rows live in child doctype `{child_dt}`, account column `{acct_field}`")
     p("")
 
     findings: list[dict] = []
     for pp in profiles:
         expected = _branch_from_warehouse(pp["warehouse"])
-        pay_rows = frappe.db.sql("""
-            select name, parent, mode_of_payment, `default`, account, allow_in_returns
-            from `tabPOS Payment Method`
+        pay_rows = frappe.db.sql(f"""
+            select name, parent, mode_of_payment, `{acct_field}` as account
+            from `tab{child_dt}`
             where parenttype = 'POS Profile' and parent = %s
             order by mode_of_payment
         """, (pp["name"],), as_dict=True)
@@ -116,6 +150,8 @@ def main():
                 "actual_branch": actual,
                 "mismatch": mismatch,
                 "row_name": r["name"],
+                "child_dt": child_dt,
+                "acct_field": acct_field,
             })
 
     p("## Findings")
@@ -170,8 +206,8 @@ def main():
     ok, failed = 0, []
     for f in repairable:
         try:
-            frappe.db.set_value("POS Payment Method", f["row_name"],
-                                "account", f["new_account"])
+            frappe.db.set_value(f["child_dt"], f["row_name"],
+                                f["acct_field"], f["new_account"])
             ok += 1
             p(f"- :white_check_mark: {f['profile']} / {f['mode']} -> {f['new_account']}")
         except Exception as e:
