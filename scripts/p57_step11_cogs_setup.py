@@ -11,17 +11,21 @@ Design decision (locked-in with user 2026-02):
 
 What this script does (wave-based, idempotent):
   WAVE=1  PLAN        (read-only) -- shows what would be done
-  WAVE=2  ACCOUNTS    creates the 3 leaf COGS accounts under
+  WAVE=2  ACCOUNTS    creates 5 leaf COGS accounts under
                       `8000 - 8499 - Cost Of Sales - SCL`
-                          - 8101 - COGS - LPG Refill - SCL
-                          - 8102 - COGS - Cylinders - SCL
-                          - 8103 - COGS - Accessories - SCL
+                          - 8101 - COGS - LPG Refill - SCL          (POS)
+                          - 8102 - COGS - Cylinders - SCL           (POS)
+                          - 8103 - COGS - Retail Accessories - SCL  (POS, fallback)
+                          - 8104 - COGS - Engineering Equipment - SCL  (Sales Invoice only)
+                          - 8105 - COGS - Engineering Services - SCL   (Sales Invoice only)
                       (idempotent: skips if already present)
   WAVE=3  ITEMS       sets Item Defaults.expense_account on every sales Item
-                      according to its Item Group:
-                          LPG / Refill / Gas  -> 8101
-                          Cylinder            -> 8102
-                          everything else     -> 8103 (default fallback)
+                      according to its Item Group (deterministic precedence):
+                          exact group 'Equipment'  -> 8104
+                          exact group 'Services'   -> 8105
+                          group contains lpg/refill/gas -> 8101
+                          group contains cylinder       -> 8102
+                          everything else               -> 8103 (Retail Accessories)
   WAVE=4  AUDIT_CC    audits Cost Center field on each POS Profile -- reports
                       missing or wrong (per outlet). Read-only.
   WAVE=5  FIX_CC      sets POS Profile.cost_center to the matching outlet's
@@ -53,26 +57,53 @@ COMPANY_ABBR = "SCL"
 # Discovered from p57_discover_cogs.py output:
 COGS_PARENT = "8000 - 8499 - Cost Of Sales - SCL"
 
-# Three leaf COGS accounts (code -- account_name -- maps-to-which-item-groups)
+# Five leaf COGS accounts.
+# Order matters: routing matches first-hit, top-to-bottom.
+# 8101/8102/8103 = POS / retail. 8104/8105 = engineering (Sales Invoice only).
 COGS_ACCOUNTS = [
     {
         "code": "8101",
         "name": "COGS - LPG Refill",
         "full": f"8101 - COGS - LPG Refill - {COMPANY_ABBR}",
-        # Item Group name substrings that route here (lowercased match)
+        # Item Group substrings that route here (lowercased match).
         "matches": ["lpg", "refill", "gas"],
+        # Exact Item Group names that route here (case-insensitive).
+        "exact": [],
     },
     {
         "code": "8102",
         "name": "COGS - Cylinders",
         "full": f"8102 - COGS - Cylinders - {COMPANY_ABBR}",
         "matches": ["cylinder"],
+        "exact": [],
+    },
+    {
+        "code": "8104",
+        "name": "COGS - Engineering Equipment",
+        "full": f"8104 - COGS - Engineering Equipment - {COMPANY_ABBR}",
+        # High-value reticulation, combustion, conversion, fabrication, corrosion items.
+        # NOT sold via POS Awesome -- Sales Invoice only.
+        "matches": ["equipment"],
+        "exact": ["equipment"],
+    },
+    {
+        "code": "8105",
+        "name": "COGS - Engineering Services",
+        "full": f"8105 - COGS - Engineering Services - {COMPANY_ABBR}",
+        # Design, installation, maintenance, procurement-fee services.
+        # NOT sold via POS Awesome -- Sales Invoice only. Items here are typically
+        # is_stock_item=0 so no COGS posts on sale; the expense_account still must
+        # be set to satisfy ERPNext validation when an invoice is submitted.
+        "matches": ["service"],
+        "exact": ["services"],
     },
     {
         "code": "8103",
-        "name": "COGS - Accessories",
-        "full": f"8103 - COGS - Accessories - {COMPANY_ABBR}",
-        "matches": [],  # fallback
+        "name": "COGS - Retail Accessories",
+        "full": f"8103 - COGS - Retail Accessories - {COMPANY_ABBR}",
+        # Fallback bucket for small POS accessories (regulators, hoses, valves, etc.)
+        "matches": [],
+        "exact": [],
     },
 ]
 
@@ -95,13 +126,26 @@ def _save(L, fname="p57_step11_cogs"):
 
 
 def _route_for_item_group(group_name: str) -> dict:
-    """Return the COGS_ACCOUNTS entry that best matches this item group."""
-    g = (group_name or "").lower()
+    """Return the COGS_ACCOUNTS entry that best matches this item group.
+    Precedence: exact group-name match (case-insensitive) > substring keyword match
+    > fallback (last entry in COGS_ACCOUNTS = Retail Accessories).
+    """
+    g = (group_name or "").lower().strip()
+    # 1. exact match
+    for acct in COGS_ACCOUNTS:
+        for ex in acct.get("exact", []):
+            if g == ex.lower():
+                return acct
+    # 2. substring keyword
     for acct in COGS_ACCOUNTS:
         for kw in acct["matches"]:
             if kw in g:
                 return acct
-    return COGS_ACCOUNTS[-1]  # fallback = Accessories
+    # 3. fallback: the entry with empty matches AND empty exact
+    for acct in COGS_ACCOUNTS:
+        if not acct["matches"] and not acct.get("exact"):
+            return acct
+    return COGS_ACCOUNTS[-1]
 
 
 def _outlet_from_warehouse(wh: str | None) -> str | None:
