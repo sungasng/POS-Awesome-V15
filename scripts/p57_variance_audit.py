@@ -31,7 +31,7 @@ def main():
 
     rows = frappe.db.sql("""
         select name, pos_profile, user, period_start_date, period_end_date,
-               grand_total, posting_date, modified, modified_by, docstatus, status,
+               grand_total, posting_date, modified, modified_by, docstatus,
                pos_opening_shift
         from `tabPOS Closing Shift`
         where date(period_end_date) = %s
@@ -54,7 +54,7 @@ def main():
         p(f"- period: {cs['period_start_date']} -> {cs['period_end_date']}")
         p(f"- grand_total: NGN {cs['grand_total'] or 0:,.2f}")
         p(f"- opening shift: `{cs['pos_opening_shift']}`")
-        p(f"- docstatus: {cs['docstatus']} / status: {cs['status']}")
+        p(f"- docstatus: {cs['docstatus']}")
         p("")
 
         recon = frappe.db.sql("""
