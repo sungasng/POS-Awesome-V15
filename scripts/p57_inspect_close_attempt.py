@@ -45,7 +45,7 @@ def main():
     # 2) Closing Shifts linked to this opening
     p("## 2. POS Closing Shift records that reference this Opening Shift")
     cs_links = frappe.db.sql("""
-        select name, docstatus, status, period_end_date, posting_date,
+        select name, docstatus, period_end_date, posting_date,
                grand_total, modified, owner
         from `tabPOS Closing Shift`
         where pos_opening_shift = %s
@@ -55,7 +55,7 @@ def main():
         p("- (none) -- no Closing Shift document was ever created against this Opening")
     else:
         for r in cs_links:
-            p(f"- {r['name']} | docstatus={r['docstatus']} status={r['status']} "
+            p(f"- {r['name']} | docstatus={r['docstatus']} "
               f"period_end={r['period_end_date']} grand_total=NGN {float(r['grand_total'] or 0):,.2f} "
               f"modified={r['modified']} owner={r['owner']}")
     p("")
@@ -63,7 +63,7 @@ def main():
     # 3) Latest 5 closing shifts for the profile
     p("## 3. Last 5 POS Closing Shift records for `POS - Ikeja`")
     recent_cs = frappe.db.sql("""
-        select name, docstatus, status, period_end_date, modified, pos_opening_shift
+        select name, docstatus, period_end_date, modified, pos_opening_shift
         from `tabPOS Closing Shift`
         where pos_profile = %s
         order by modified desc limit 5
@@ -72,7 +72,7 @@ def main():
         p("- (none ever)")
     else:
         for r in recent_cs:
-            p(f"- {r['name']} | docstatus={r['docstatus']} status={r['status']} "
+            p(f"- {r['name']} | docstatus={r['docstatus']} "
               f"period_end={r['period_end_date']} modified={r['modified']} "
               f"linked_opening={r['pos_opening_shift']}")
     p("")
