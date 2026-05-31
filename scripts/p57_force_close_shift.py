@@ -154,13 +154,13 @@ def main():
     cs.user = os_doc.user
     cs.grand_total = total_grand
     cs.net_total = total_grand - sum(float(t["amt"] or 0) for t in taxes_agg)
-    cs.total_quantity = sum(
-        float(qty) for qty in frappe.db.sql(f"""
-            select sum(qty) from `tabPOS Invoice Item` pii
-            join `tabPOS Invoice` pi on pi.name = pii.parent
-            where pi.{field} = %s and pi.docstatus = 1
-        """, (SHIFT,)) or [(0,)]
-    )
+    qty_rows = frappe.db.sql(f"""
+        select coalesce(sum(pii.qty), 0)
+        from `tabPOS Invoice Item` pii
+        join `tabPOS Invoice` pi on pi.name = pii.parent
+        where pi.{field} = %s and pi.docstatus = 1
+    """, (SHIFT,))
+    cs.total_quantity = float(qty_rows[0][0]) if qty_rows and qty_rows[0] else 0.0
 
     # Payment Reconciliation table
     cs.payment_reconciliation = []
