@@ -823,6 +823,41 @@
 							</v-data-table>
 						</v-col>
 					</v-row>
+					<v-row v-if="hasVariance" class="mt-2">
+						<v-col cols="12" class="pa-1">
+							<v-alert
+								:type="varianceSeverity === 'block' ? 'error' : 'warning'"
+								variant="tonal"
+								density="comfortable"
+								class="mb-3"
+								data-testid="variance-banner"
+							>
+								<div class="text-subtitle-2">
+									{{ __("Variance Detected") }}: {{ formatCurrency(totalVariance) }}
+									<span v-if="totalExpected > 0">
+										({{ formatFloat((totalVariance / totalExpected) * 100, 2) }}%)
+									</span>
+								</div>
+								<div class="text-caption mt-1">
+									{{ varianceSeverity === 'block'
+										? __("Variance is large and requires manager approval before submission. Please record the explanation below; a manager must approve from the back office.")
+										: __("Please explain the variance below. Your remarks will be saved with the closing shift and reviewed by Accounts.") }}
+								</div>
+							</v-alert>
+							<v-textarea
+								v-model="dialog_data.variance_remarks"
+								:label="__('Variance Remarks (required when variance is non-zero)')"
+								:placeholder="__('e.g. NGN 500 short - customer paid via transfer not recorded, will reconcile tomorrow')"
+								variant="outlined"
+								density="comfortable"
+								rows="3"
+								auto-grow
+								counter="500"
+								maxlength="500"
+								data-testid="variance-remarks-input"
+							></v-textarea>
+						</v-col>
+					</v-row>
 				</v-container>
 			</v-card-text>
 
@@ -934,6 +969,51 @@ export default {
 	}),
 	watch: {},
 
+	computed: {
+		varianceThresholds() {
+			// Defaults match Sungas Close Policy (warn 5k/0.5%, block 50k/2%).
+			// Cashier sees the textarea on ANY non-zero variance to encourage attestation;
+			// backend enforces real thresholds.
+			return {
+				warnAbs: 5000,
+				warnPct: 0.5,
+				blockAbs: 50000,
+				blockPct: 2,
+			};
+		},
+		totalExpected() {
+			const rows = this.dialog_data?.payment_reconciliation || [];
+			return rows.reduce((s, r) => s + (Number(r?.expected_amount) || 0), 0);
+		},
+		totalVariance() {
+			const rows = this.dialog_data?.payment_reconciliation || [];
+			return rows.reduce((s, r) => {
+				const closing = Number(r?.closing_amount) || 0;
+				const expected = Number(r?.expected_amount) || 0;
+				return s + (closing - expected);
+			}, 0);
+		},
+		absVariance() {
+			return Math.abs(this.totalVariance);
+		},
+		variancePct() {
+			return this.totalExpected > 0 ? (this.absVariance / this.totalExpected) * 100 : 0;
+		},
+		hasVariance() {
+			return this.absVariance >= 0.01;
+		},
+		varianceSeverity() {
+			const t = this.varianceThresholds;
+			if (this.absVariance >= t.blockAbs || this.variancePct >= t.blockPct) {
+				return "block";
+			}
+			if (this.absVariance >= t.warnAbs || this.variancePct >= t.warnPct) {
+				return "warn";
+			}
+			return "none";
+		},
+	},
+
 	methods: {
 		handleKeydown(event) {
 			if (event.key === "Escape" && this.closingDialog) {
@@ -953,6 +1033,22 @@ export default {
 				alert(this.__("Invalid closing amount"));
 				return;
 			}
+			// Cashier-side guard: if variance is non-zero, require remarks.
+			// Backend (Sungas Close Policy hook) is the authority and will throw
+			// with the exact policy message if thresholds are breached without remarks.
+			const remarks = (this.dialog_data.variance_remarks || "").trim();
+			if (this.hasVariance && !remarks) {
+				alert(
+					this.__(
+						"Please enter Variance Remarks before submitting. Your shift has a variance of {0} ({1}%) and an explanation is required.",
+					)
+						.replace("{0}", this.formatCurrency(this.totalVariance))
+						.replace("{1}", this.formatFloat(this.variancePct, 2)),
+				);
+				return;
+			}
+			// Pass remarks through (trimmed) so the backend stores a clean value.
+			this.dialog_data.variance_remarks = remarks;
 			this.eventBus.emit("submit_closing_pos", this.dialog_data);
 			this.closingDialog = false;
 		},
@@ -1530,6 +1626,11 @@ export default {
 		this.headers = [...this.baseHeaders];
 		this.eventBus.on("open_ClosingDialog", (data) => {
 			this.closingDialog = true;
+			// Ensure variance_remarks is present so v-model works reactively
+			// (backend doc may not return the custom field if Sungas app not yet installed).
+			if (data && data.variance_remarks === undefined) {
+				data.variance_remarks = "";
+			}
 			this.dialog_data = data;
 			this.fetchOverview(data.pos_opening_shift);
 		});
