@@ -16,16 +16,22 @@ What this script does (wave-based, idempotent):
                           - 8101 - COGS - LPG Refill - SCL          (POS)
                           - 8102 - COGS - Cylinders - SCL           (POS)
                           - 8103 - COGS - Retail Accessories - SCL  (POS, fallback)
-                          - 8104 - COGS - Engineering Equipment - SCL  (Sales Invoice only)
-                          - 8105 - COGS - Engineering Services - SCL   (Sales Invoice only)
+                          - 8104 - COGS - Gas Equipment - SCL       (Sales Invoice only)
+                          - 8105 - COGS - Services - SCL            (Sales Invoice only)
+                      Also creates 1 NEW Income account to mirror:
+                          - 7105 - Revenue - Cylinders - SCL
                       (idempotent: skips if already present)
-  WAVE=3  ITEMS       sets Item Defaults.expense_account on every sales Item
-                      according to its Item Group (deterministic precedence):
-                          exact group 'Equipment'  -> 8104
-                          exact group 'Services'   -> 8105
-                          group contains lpg/refill/gas -> 8101
-                          group contains cylinder       -> 8102
-                          everything else               -> 8103 (Retail Accessories)
+  WAVE=3  ITEMS       sets BOTH expense_account AND income_account on every
+                      sales Item, according to its Item Group (deterministic):
+                          exact 'Equipment'        -> 8104 / 7103 Gas Equipment
+                          exact 'Services'         -> 8105 / 7104 Services
+                          exact 'LPG-Cylinders'    -> 8102 / 7105 Cylinders
+                          exact 'LPG'              -> 8101 / 7101 LPG
+                          contains 'cylinder'      -> 8102 / 7105
+                          contains 'refill'        -> 8101 / 7101
+                          contains 'equipment'     -> 8104 / 7103
+                          contains 'service'       -> 8105 / 7104
+                          everything else          -> 8103 / 7102 Retail Accessories
   WAVE=4  AUDIT_CC    audits Cost Center field on each POS Profile -- reports
                       missing or wrong (per outlet). Read-only.
   WAVE=5  FIX_CC      sets POS Profile.cost_center to the matching outlet's
@@ -53,68 +59,87 @@ import frappe
 COMPANY = "SUNGAS COMPANY LIMITED"
 COMPANY_ABBR = "SCL"
 
-# Parent group account under which to create the 3 leaf COGS accounts.
+# Parent group account under which to create the 5 leaf COGS accounts.
 # Discovered from p57_discover_cogs.py output:
 COGS_PARENT = "8000 - 8499 - Cost Of Sales - SCL"
+# Parent group account under which to create new Income leaf(s).
+# Discovered from WAVE 1 income enumeration.
+INCOME_PARENT = "7000 - 7199 - Turnover - SCL"
 
-# Five leaf COGS buckets. Each bucket also carries hints for discovering its
-# corresponding existing Income (revenue) account. Routing precedence:
+# Five buckets, each carrying its COGS leaf + matching Income leaf.
+# Routing precedence (Item Group -> bucket):
 #   1) exact match on Item Group name (case-insensitive)
-#   2) substring match on Item Group name
-#   3) the bucket flagged `fallback=True` catches everything else.
-# 8101/8102/8103 = POS / retail. 8104/8105 = engineering (Sales Invoice only).
+#   2) substring keyword match
+#   3) the bucket flagged `fallback=True`
+# Income leaves match existing CoA at 71xx; 7105 (Cylinders) is the only new
+# revenue account being created -- everything else already exists.
 COGS_ACCOUNTS = [
     {
         "code": "8102",
         "name": "COGS - Cylinders",
         "full": f"8102 - COGS - Cylinders - {COMPANY_ABBR}",
+        "income_code": "7105",
+        "income_name": "Revenue - Cylinders",
+        "income_full": f"7105 - Revenue - Cylinders - {COMPANY_ABBR}",
+        "income_create": True,
         # Cylinders MUST be checked before LPG Refill -- "LPG-Cylinders" contains
         # the keyword 'lpg', and we don't want it routed to refill.
         "matches": ["cylinder"],
         "exact": ["LPG-Cylinders"],
-        # Hints used to discover the existing 41xx income leaf for this bucket.
-        "income_hint": ["cylinder"],
         "fallback": False,
     },
     {
         "code": "8101",
         "name": "COGS - LPG Refill",
         "full": f"8101 - COGS - LPG Refill - {COMPANY_ABBR}",
+        "income_code": "7101",
+        "income_name": "Revenue - LPG",
+        "income_full": f"7101 - Revenue - LPG - {COMPANY_ABBR}",
+        "income_create": False,
         # Only refill-related groups. "gas" keyword dropped -- it was matching
         # "Gas Cookers" (appliances), which belong in Retail Accessories.
         "matches": ["refill"],
         "exact": ["LPG"],
-        "income_hint": ["lpg refill", "refill", "lpg sales", "sales of lpg"],
         "fallback": False,
     },
     {
         "code": "8104",
-        "name": "COGS - Engineering Equipment",
-        "full": f"8104 - COGS - Engineering Equipment - {COMPANY_ABBR}",
+        "name": "COGS - Gas Equipment",
+        "full": f"8104 - COGS - Gas Equipment - {COMPANY_ABBR}",
+        "income_code": "7103",
+        "income_name": "Revenue - Gas Equipment",
+        "income_full": f"7103 - Revenue - Gas Equipment - {COMPANY_ABBR}",
+        "income_create": False,
         # High-value reticulation, combustion, conversion, fabrication, corrosion items.
         # NOT sold via POS Awesome -- Sales Invoice only.
         "matches": ["equipment"],
         "exact": ["Equipment"],
-        "income_hint": ["equipment", "engineering"],
         "fallback": False,
     },
     {
         "code": "8105",
-        "name": "COGS - Engineering Services",
-        "full": f"8105 - COGS - Engineering Services - {COMPANY_ABBR}",
+        "name": "COGS - Services",
+        "full": f"8105 - COGS - Services - {COMPANY_ABBR}",
+        "income_code": "7104",
+        "income_name": "Revenue - Services (installations and others)",
+        "income_full": f"7104 - Revenue - Services (installations and others) - {COMPANY_ABBR}",
+        "income_create": False,
         # Design, installation, maintenance, procurement-fee services.
         # NOT sold via POS Awesome -- Sales Invoice only. Items here are typically
         # is_stock_item=0 so no COGS posts on sale; the expense_account still must
         # be set to satisfy ERPNext validation when an invoice is submitted.
         "matches": ["service"],
         "exact": ["Services"],
-        "income_hint": ["service", "engineering services"],
         "fallback": False,
     },
     {
         "code": "8103",
         "name": "COGS - Retail Accessories",
         "full": f"8103 - COGS - Retail Accessories - {COMPANY_ABBR}",
+        "income_code": "7102",
+        "income_name": "Revenue - Accessories",
+        "income_full": f"7102 - Revenue - Accessories - {COMPANY_ABBR}",
+        "income_create": False,
         # Catch-all for everything sold via POS that isn't a cylinder or refill:
         # regulators, hoses, valves, gas cookers, accessories, plus low-importance
         # leftover groups (Consumable(s), Products, Raw Material, Sub Assemblies).
@@ -124,7 +149,6 @@ COGS_ACCOUNTS = [
         "matches": [],
         "exact": ["Gas Cookers", "Accessories", "Consumable", "Consumables",
                   "Products", "Raw Material", "Sub Assemblies"],
-        "income_hint": ["accessor", "retail", "other"],
         "fallback": True,
     },
 ]
@@ -281,62 +305,35 @@ def wave1_plan(L):
         p(f"- ... +{len(missing) - 25} more")
     p("")
 
-    # ------- Income (revenue) account discovery -------
-    p("## Income / Revenue accounts in CoA (discovery)")
-    income_groups = frappe.db.sql("""
-        select name, account_number from `tabAccount`
-        where company = %s and is_group = 1 and root_type = 'Income'
-        order by lft
-    """, (COMPANY,), as_dict=True)
-    p(f"### Income group accounts ({len(income_groups)})")
-    if not income_groups:
-        p("- (none found -- check company filter)")
+    # ------- Income (revenue) accounts plan -------
+    p("## Income parent group account check")
+    income_parent_exists = frappe.db.exists("Account", INCOME_PARENT)
+    if income_parent_exists:
+        p(f"- :white_check_mark: `{INCOME_PARENT}` exists.")
     else:
-        for g in income_groups:
-            p(f"- `{g['name']}`")
+        p(f"- :x: `{INCOME_PARENT}` NOT FOUND. WAVE 2 income-account creation will fail.")
     p("")
 
-    income_leaves = frappe.db.sql("""
-        select name, account_number, parent_account from `tabAccount`
-        where company = %s and disabled = 0 and is_group = 0
-          and root_type = 'Income'
-        order by account_number, name
-    """, (COMPANY,), as_dict=True)
-    p(f"### Income leaf accounts ({len(income_leaves)})")
-    if not income_leaves:
-        p("- (none)")
-    else:
-        p("| Code | Account | Parent |")
-        p("|------|---------|--------|")
-        for r in income_leaves:
-            p(f"| {r['account_number'] or '-'} | `{r['name']}` | {r['parent_account']} |")
+    p("## Income accounts (WAVE 2 / WAVE 3)")
+    p("| Code | Account Name | Full Name | Status |")
+    p("|------|--------------|-----------|--------|")
+    for b in COGS_ACCOUNTS:
+        exists = frappe.db.exists("Account", b["income_full"])
+        if exists:
+            status = ":white_check_mark: EXISTS"
+        elif b["income_create"]:
+            status = ":sparkles: WILL CREATE"
+        else:
+            status = ":x: MISSING + not flagged for creation"
+        p(f"| {b['income_code']} | {b['income_name']} | `{b['income_full']}` | {status} |")
     p("")
 
-    # Proposed bucket -> existing income leaf mapping (heuristic)
-    p("### Proposed bucket -> existing income leaf mapping")
-    p("(Heuristic match -- please confirm or override before WAVE 3.)")
-    p("")
-    p("| Bucket | Hint keywords | Proposed Income Account |")
-    p("|--------|--------------|-------------------------|")
-    proposed = {}
-    used = set()
-    for bucket in COGS_ACCOUNTS:
-        hints = bucket.get("income_hint", [])
-        match = None
-        # Try multi-word hints first (more specific), then single-word
-        sorted_hints = sorted(hints, key=lambda h: (-len(h.split()), h))
-        for hint in sorted_hints:
-            for leaf in income_leaves:
-                lname = leaf["name"].lower()
-                if hint.lower() in lname and leaf["name"] not in used:
-                    match = leaf["name"]
-                    used.add(match)
-                    break
-            if match:
-                break
-        proposed[bucket["code"]] = match
-        p(f"| {bucket['code']} {bucket['name'].split(' - ', 1)[-1]} | "
-          f"{', '.join(hints) or '(none)'} | `{match or '(NO MATCH - manual pick required)'}` |")
+    # Per-bucket consolidated COGS + Income plan
+    p("## Per-bucket plan (COGS + Income, WAVE 3 sets BOTH on Item Defaults)")
+    p("| Bucket | COGS Account | Income Account |")
+    p("|--------|--------------|----------------|")
+    for b in COGS_ACCOUNTS:
+        p(f"| {b['name'].replace('COGS - ', '')} | `{b['full']}` | `{b['income_full']}` |")
     p("")
 
     # Current income_account distribution on the 143 items
@@ -382,10 +379,9 @@ def wave1_plan(L):
         p(f"  - `{n}` (outlet=`{o}`) currently=`{c}` expected=`{e}`")
     p("")
     p("---")
-    p("Next: review the **Proposed bucket -> Income leaf mapping** above. If")
-    p("any row says `(NO MATCH)` or you want to override a heuristic pick,")
-    p("tell the agent the correct income account name. Otherwise run")
-    p("`WAVE=2 LIVE=1` to create the 5 COGS accounts.")
+    p("Next: run `WAVE=2 LIVE=1` to create 5 COGS accounts + 1 new income account")
+    p("(7105 - Revenue - Cylinders). Then `WAVE=3 LIVE=1` to set both")
+    p("expense_account and income_account on all 143 sales items.")
 
 
 def wave2_accounts(L, live: bool):
@@ -429,25 +425,74 @@ def wave2_accounts(L, live: bool):
         except Exception as e:
             failed.append((a["full"], str(e)))
             p(f"- :x: `{a['full']}`: {e}")
+
+    # ---- Income side ----
+    p("")
+    p("## Income accounts")
+    if frappe.db.exists("Account", INCOME_PARENT):
+        income_parent_doc = frappe.get_doc("Account", INCOME_PARENT)
+    else:
+        income_parent_doc = None
+        p(f"- :x: Income parent `{INCOME_PARENT}` not found -- skipping income creation.")
+
+    inc_created, inc_skipped = 0, 0
+    for a in COGS_ACCOUNTS:
+        if not a.get("income_create"):
+            inc_skipped += 1
+            continue
+        if frappe.db.exists("Account", a["income_full"]):
+            inc_skipped += 1
+            p(f"- skip `{a['income_full']}` (already exists)")
+            continue
+        if not live:
+            p(f"- WOULD CREATE `{a['income_full']}` under `{INCOME_PARENT}`")
+            continue
+        if not income_parent_doc:
+            continue
+        try:
+            doc = frappe.get_doc({
+                "doctype": "Account",
+                "account_name": a["income_name"],
+                "account_number": a["income_code"],
+                "parent_account": INCOME_PARENT,
+                "company": COMPANY,
+                "root_type": "Income",
+                "report_type": "Profit and Loss",
+                "is_group": 0,
+                "account_currency": income_parent_doc.account_currency or "NGN",
+            })
+            doc.insert(ignore_permissions=True)
+            inc_created += 1
+            p(f"- :white_check_mark: created `{doc.name}`")
+        except Exception as e:
+            failed.append((a["income_full"], str(e)))
+            p(f"- :x: `{a['income_full']}`: {e}")
+
     if live:
         frappe.db.commit()
     p("")
-    p(f"**Created**: {created}    **Skipped**: {skipped}    **Failed**: {len(failed)}")
+    p(f"**COGS Created**: {created}    **Skipped**: {skipped}")
+    p(f"**Income Created**: {inc_created}    **Skipped**: {inc_skipped}")
+    p(f"**Failed**: {len(failed)}")
 
 
 def wave3_items(L, live: bool):
     p = L.append
-    p("# p57 / Step 11 / WAVE 3 -- Set Item Defaults expense_account")
+    p("# p57 / Step 11 / WAVE 3 -- Set Item Defaults (expense_account + income_account)")
     p("")
     p(f"- Mode: {'LIVE' if live else 'DRY-RUN'}")
     p("")
 
-    # Pre-check: all 3 COGS accounts exist?
-    missing_accts = [a["full"] for a in COGS_ACCOUNTS if not frappe.db.exists("Account", a["full"])]
-    if missing_accts:
-        p("**ABORT** -- the following COGS accounts do not exist (run WAVE 2 first):")
-        for n in missing_accts:
-            p(f"  - `{n}`")
+    # Pre-check: all 5 COGS + all 5 Income accounts exist?
+    missing_cogs = [a["full"] for a in COGS_ACCOUNTS if not frappe.db.exists("Account", a["full"])]
+    missing_income = [a["income_full"] for a in COGS_ACCOUNTS
+                      if not frappe.db.exists("Account", a["income_full"])]
+    if missing_cogs or missing_income:
+        p("**ABORT** -- the following accounts do not exist (run WAVE 2 first):")
+        for n in missing_cogs:
+            p(f"  - COGS:   `{n}`")
+        for n in missing_income:
+            p(f"  - Income: `{n}`")
         return
 
     items = frappe.db.sql("""
@@ -462,25 +507,30 @@ def wave3_items(L, live: bool):
 
     for it in items:
         target = _route_for_item_group(it["item_group"])
-        target_acct = target["full"]
+        target_cogs = target["full"]
+        target_income = target["income_full"]
         try:
             doc = frappe.get_doc("Item", it["name"])
             row = next((r for r in doc.item_defaults if r.company == COMPANY), None)
-            current = (row.expense_account if row else None)
-            if current == target_acct:
+            current_cogs = (row.expense_account if row else None)
+            current_income = (row.income_account if row else None)
+            if current_cogs == target_cogs and current_income == target_income:
                 unchanged += 1
                 continue
             if not live:
-                p(f"- WOULD set `{it['name']}` (group=`{it['item_group']}`) -> `{target_acct}` "
-                  f"(currently=`{current or '(unset)'}`)")
+                p(f"- WOULD set `{it['name']}` (group=`{it['item_group']}`):")
+                p(f"    expense_account = `{target_cogs}` (was `{current_cogs or '(unset)'}`)")
+                p(f"    income_account  = `{target_income}` (was `{current_income or '(unset)'}`)")
                 by_route[target["code"]] += 1
                 continue
             if row:
-                row.expense_account = target_acct
+                row.expense_account = target_cogs
+                row.income_account = target_income
             else:
                 doc.append("item_defaults", {
                     "company": COMPANY,
-                    "expense_account": target_acct,
+                    "expense_account": target_cogs,
+                    "income_account": target_income,
                 })
             doc.save(ignore_permissions=True)
             updated += 1
@@ -491,9 +541,12 @@ def wave3_items(L, live: bool):
         frappe.db.commit()
 
     p("")
-    p("## Routing summary")
+    p("## Routing summary (items per bucket)")
+    p("| Bucket | COGS | Income | Items |")
+    p("|--------|------|--------|-------|")
     for a in COGS_ACCOUNTS:
-        p(f"- `{a['full']}` -> {by_route[a['code']]} items")
+        p(f"| {a['name'].replace('COGS - ', '')} | `{a['full']}` | "
+          f"`{a['income_full']}` | {by_route[a['code']]} |")
     p("")
     p(f"**Updated**: {updated}    **Unchanged**: {unchanged}    **Failed**: {len(failed)}")
     for n, e in failed[:10]:
