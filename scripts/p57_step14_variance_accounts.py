@@ -40,28 +40,31 @@ COMPANY_ABBR = "SCL"
 
 BUCKETS = [
     {
-        "code": "1602",
+        "code": "2602",
         "name": "Cash Suspense - Cashier Recovery",
-        "full": f"1602 - Cash Suspense - Cashier Recovery - {COMPANY_ABBR}",
+        "full": f"2602 - Cash Suspense - Cashier Recovery - {COMPANY_ABBR}",
         "root_type": "Asset",
         "account_type": "Receivable",
         "env_parent": "PARENT_RECEIVABLE",
+        "default_parent": "2600 - 2699 - Other receivables - SCL",
     },
     {
-        "code": "2702",
+        "code": "6202",
         "name": "Cash Overage Suspense",
-        "full": f"2702 - Cash Overage Suspense - {COMPANY_ABBR}",
+        "full": f"6202 - Cash Overage Suspense - {COMPANY_ABBR}",
         "root_type": "Liability",
         "account_type": "Payable",
         "env_parent": "PARENT_LIABILITY",
+        "default_parent": "6200 - Other Payables - SCL",
     },
     {
-        "code": "8203",
+        "code": "9202",
         "name": "Cash Shortage - Written Off",
-        "full": f"8203 - Cash Shortage - Written Off - {COMPANY_ABBR}",
+        "full": f"9202 - Cash Shortage - Written Off - {COMPANY_ABBR}",
         "root_type": "Expense",
         "account_type": "Expense Account",
         "env_parent": "PARENT_EXPENSE",
+        "default_parent": "9200 - 9499 - Other Operating Expense - SCL",
     },
     {
         "code": "7205",
@@ -70,6 +73,7 @@ BUCKETS = [
         "root_type": "Income",
         "account_type": "Income Account",
         "env_parent": "PARENT_INCOME",
+        "default_parent": "7200 - Other Income - SCL",
     },
 ]
 
@@ -96,10 +100,8 @@ def _guess_parent(root_type: str, code_prefix: str) -> str | None:
     groups = _list_groups(root_type)
     if not groups:
         return None
-    # Prefer a group whose code range contains the new code
     code = int(code_prefix)
     for g in groups:
-        # account_number sometimes "1600-1699"
         an = (g.get("account_number") or "")
         if "-" in an:
             try:
@@ -108,8 +110,18 @@ def _guess_parent(root_type: str, code_prefix: str) -> str | None:
                     return g["name"]
             except Exception:
                 pass
-    # Fallback: first group of that root_type
     return groups[0]["name"] if groups else None
+
+
+def _resolve_parent(bucket: dict) -> str | None:
+    """Resolution order: env override > hardcoded default > code-range guess > first group."""
+    env_val = os.environ.get(bucket["env_parent"])
+    if env_val and frappe.db.exists("Account", env_val):
+        return env_val
+    default = bucket.get("default_parent")
+    if default and frappe.db.exists("Account", default):
+        return default
+    return _guess_parent(bucket["root_type"], bucket["code"])
 
 
 def wave1_plan(L):
@@ -128,22 +140,28 @@ def wave1_plan(L):
         p("")
 
     p("## 2. Proposed accounts to create (WAVE 2)")
-    p("| Code | Account | Root | Type | Proposed Parent | Override env var |")
-    p("|------|---------|------|------|-----------------|------------------|")
+    p("| Code | Account | Root | Type | Proposed Parent | Source | Status |")
+    p("|------|---------|------|------|-----------------|--------|--------|")
     for b in BUCKETS:
-        guessed = _guess_parent(b["root_type"], b["code"])
         env_value = os.environ.get(b["env_parent"])
-        parent = env_value or guessed or "(NONE FOUND)"
+        default = b.get("default_parent")
+        parent = _resolve_parent(b)
+        if env_value and parent == env_value:
+            src = "env override"
+        elif default and parent == default:
+            src = "hardcoded default"
+        elif parent:
+            src = "code-range guess"
+        else:
+            src = "NONE FOUND"
         if frappe.db.exists("Account", b["full"]):
             status = ":white_check_mark: EXISTS"
-        elif env_value:
-            status = ":sparkles: WILL CREATE (env override)"
-        elif guessed:
-            status = ":sparkles: WILL CREATE (auto-pick)"
+        elif parent:
+            status = ":sparkles: WILL CREATE"
         else:
-            status = ":x: NO PARENT FOUND"
+            status = ":x: NO PARENT"
         p(f"| {b['code']} | {b['name']} | {b['root_type']} | {b['account_type']} | "
-          f"`{parent}` | `{b['env_parent']}` | {status} |")
+          f"`{parent or '(none)'}` | {src} | {status} |")
     p("")
     p("To override a parent: `export PARENT_RECEIVABLE='1600 - Current Receivables - SCL'` etc.")
     p("")
@@ -211,8 +229,7 @@ def wave2_accounts(L, live: bool):
             skipped += 1
             p(f"- skip `{b['full']}` (already exists)")
             continue
-        env_value = os.environ.get(b["env_parent"])
-        parent = env_value or _guess_parent(b["root_type"], b["code"])
+        parent = _resolve_parent(b)
         if not parent or not frappe.db.exists("Account", parent):
             failed.append((b["full"], f"no parent found (env={b['env_parent']})"))
             p(f"- :x: `{b['full']}`: no parent found (set env `{b['env_parent']}`)")
@@ -288,8 +305,8 @@ def wave3_backfill(L, live: bool):
     p("")
 
     # Pre-check accounts exist
-    shortage_acct = next(b["full"] for b in BUCKETS if b["code"] == "1602")
-    overage_acct = next(b["full"] for b in BUCKETS if b["code"] == "2702")
+    shortage_acct = next(b["full"] for b in BUCKETS if b["code"] == "2602")
+    overage_acct = next(b["full"] for b in BUCKETS if b["code"] == "6202")
     if not frappe.db.exists("Account", shortage_acct):
         p(f"**ABORT** -- `{shortage_acct}` does not exist (run WAVE 2 first)")
         return
