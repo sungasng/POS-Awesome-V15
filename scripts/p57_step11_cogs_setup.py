@@ -57,25 +57,35 @@ COMPANY_ABBR = "SCL"
 # Discovered from p57_discover_cogs.py output:
 COGS_PARENT = "8000 - 8499 - Cost Of Sales - SCL"
 
-# Five leaf COGS accounts.
-# Order matters: routing matches first-hit, top-to-bottom.
+# Five leaf COGS buckets. Each bucket also carries hints for discovering its
+# corresponding existing Income (revenue) account. Routing precedence:
+#   1) exact match on Item Group name (case-insensitive)
+#   2) substring match on Item Group name
+#   3) the bucket flagged `fallback=True` catches everything else.
 # 8101/8102/8103 = POS / retail. 8104/8105 = engineering (Sales Invoice only).
 COGS_ACCOUNTS = [
-    {
-        "code": "8101",
-        "name": "COGS - LPG Refill",
-        "full": f"8101 - COGS - LPG Refill - {COMPANY_ABBR}",
-        # Item Group substrings that route here (lowercased match).
-        "matches": ["lpg", "refill", "gas"],
-        # Exact Item Group names that route here (case-insensitive).
-        "exact": [],
-    },
     {
         "code": "8102",
         "name": "COGS - Cylinders",
         "full": f"8102 - COGS - Cylinders - {COMPANY_ABBR}",
+        # Cylinders MUST be checked before LPG Refill -- "LPG-Cylinders" contains
+        # the keyword 'lpg', and we don't want it routed to refill.
         "matches": ["cylinder"],
-        "exact": [],
+        "exact": ["LPG-Cylinders"],
+        # Hints used to discover the existing 41xx income leaf for this bucket.
+        "income_hint": ["cylinder"],
+        "fallback": False,
+    },
+    {
+        "code": "8101",
+        "name": "COGS - LPG Refill",
+        "full": f"8101 - COGS - LPG Refill - {COMPANY_ABBR}",
+        # Only refill-related groups. "gas" keyword dropped -- it was matching
+        # "Gas Cookers" (appliances), which belong in Retail Accessories.
+        "matches": ["refill"],
+        "exact": ["LPG"],
+        "income_hint": ["lpg refill", "refill", "lpg sales", "sales of lpg"],
+        "fallback": False,
     },
     {
         "code": "8104",
@@ -84,7 +94,9 @@ COGS_ACCOUNTS = [
         # High-value reticulation, combustion, conversion, fabrication, corrosion items.
         # NOT sold via POS Awesome -- Sales Invoice only.
         "matches": ["equipment"],
-        "exact": ["equipment"],
+        "exact": ["Equipment"],
+        "income_hint": ["equipment", "engineering"],
+        "fallback": False,
     },
     {
         "code": "8105",
@@ -95,15 +107,25 @@ COGS_ACCOUNTS = [
         # is_stock_item=0 so no COGS posts on sale; the expense_account still must
         # be set to satisfy ERPNext validation when an invoice is submitted.
         "matches": ["service"],
-        "exact": ["services"],
+        "exact": ["Services"],
+        "income_hint": ["service", "engineering services"],
+        "fallback": False,
     },
     {
         "code": "8103",
         "name": "COGS - Retail Accessories",
         "full": f"8103 - COGS - Retail Accessories - {COMPANY_ABBR}",
-        # Fallback bucket for small POS accessories (regulators, hoses, valves, etc.)
+        # Catch-all for everything sold via POS that isn't a cylinder or refill:
+        # regulators, hoses, valves, gas cookers, accessories, plus low-importance
+        # leftover groups (Consumable(s), Products, Raw Material, Sub Assemblies).
+        # NOTE: Raw Material + Sub Assemblies are manufacturing inputs and should
+        # generally have is_sales_item=0. Any items here are likely data-hygiene
+        # candidates -- flagged in audit but safely routed in the meantime.
         "matches": [],
-        "exact": [],
+        "exact": ["Gas Cookers", "Accessories", "Consumable", "Consumables",
+                  "Products", "Raw Material", "Sub Assemblies"],
+        "income_hint": ["accessor", "retail", "other"],
+        "fallback": True,
     },
 ]
 
@@ -128,10 +150,10 @@ def _save(L, fname="p57_step11_cogs"):
 def _route_for_item_group(group_name: str) -> dict:
     """Return the COGS_ACCOUNTS entry that best matches this item group.
     Precedence: exact group-name match (case-insensitive) > substring keyword match
-    > fallback (last entry in COGS_ACCOUNTS = Retail Accessories).
+    > the bucket flagged `fallback=True`.
     """
     g = (group_name or "").lower().strip()
-    # 1. exact match
+    # 1. exact match (across all buckets, top-to-bottom)
     for acct in COGS_ACCOUNTS:
         for ex in acct.get("exact", []):
             if g == ex.lower():
@@ -141,9 +163,9 @@ def _route_for_item_group(group_name: str) -> dict:
         for kw in acct["matches"]:
             if kw in g:
                 return acct
-    # 3. fallback: the entry with empty matches AND empty exact
+    # 3. fallback bucket
     for acct in COGS_ACCOUNTS:
-        if not acct["matches"] and not acct.get("exact"):
+        if acct.get("fallback"):
             return acct
     return COGS_ACCOUNTS[-1]
 
@@ -259,6 +281,80 @@ def wave1_plan(L):
         p(f"- ... +{len(missing) - 25} more")
     p("")
 
+    # ------- Income (revenue) account discovery -------
+    p("## Income / Revenue accounts in CoA (discovery)")
+    income_groups = frappe.db.sql("""
+        select name, account_number from `tabAccount`
+        where company = %s and is_group = 1 and root_type = 'Income'
+        order by lft
+    """, (COMPANY,), as_dict=True)
+    p(f"### Income group accounts ({len(income_groups)})")
+    if not income_groups:
+        p("- (none found -- check company filter)")
+    else:
+        for g in income_groups:
+            p(f"- `{g['name']}`")
+    p("")
+
+    income_leaves = frappe.db.sql("""
+        select name, account_number, parent_account from `tabAccount`
+        where company = %s and disabled = 0 and is_group = 0
+          and root_type = 'Income'
+        order by account_number, name
+    """, (COMPANY,), as_dict=True)
+    p(f"### Income leaf accounts ({len(income_leaves)})")
+    if not income_leaves:
+        p("- (none)")
+    else:
+        p("| Code | Account | Parent |")
+        p("|------|---------|--------|")
+        for r in income_leaves:
+            p(f"| {r['account_number'] or '-'} | `{r['name']}` | {r['parent_account']} |")
+    p("")
+
+    # Proposed bucket -> existing income leaf mapping (heuristic)
+    p("### Proposed bucket -> existing income leaf mapping")
+    p("(Heuristic match -- please confirm or override before WAVE 3.)")
+    p("")
+    p("| Bucket | Hint keywords | Proposed Income Account |")
+    p("|--------|--------------|-------------------------|")
+    proposed = {}
+    used = set()
+    for bucket in COGS_ACCOUNTS:
+        hints = bucket.get("income_hint", [])
+        match = None
+        # Try multi-word hints first (more specific), then single-word
+        sorted_hints = sorted(hints, key=lambda h: (-len(h.split()), h))
+        for hint in sorted_hints:
+            for leaf in income_leaves:
+                lname = leaf["name"].lower()
+                if hint.lower() in lname and leaf["name"] not in used:
+                    match = leaf["name"]
+                    used.add(match)
+                    break
+            if match:
+                break
+        proposed[bucket["code"]] = match
+        p(f"| {bucket['code']} {bucket['name'].split(' - ', 1)[-1]} | "
+          f"{', '.join(hints) or '(none)'} | `{match or '(NO MATCH - manual pick required)'}` |")
+    p("")
+
+    # Current income_account distribution on the 143 items
+    cur_dist = frappe.db.sql("""
+        select id.income_account as acc, count(*) as n
+        from `tabItem` it
+        left join `tabItem Default` id on id.parent = it.name and id.company = %s
+        where it.disabled = 0 and it.is_sales_item = 1
+        group by id.income_account
+        order by n desc
+    """, (COMPANY,), as_dict=True)
+    p("### Current `item_defaults.income_account` distribution")
+    p("| Income Account | Item count |")
+    p("|----------------|-----------|")
+    for r in cur_dist:
+        p(f"| `{r['acc'] or '(unset)'}` | {r['n']} |")
+    p("")
+
     # POS Profile cost-center audit preview
     p("## POS Profile Cost Center audit (WAVE 4 preview)")
     profs = frappe.get_all(
@@ -286,7 +382,10 @@ def wave1_plan(L):
         p(f"  - `{n}` (outlet=`{o}`) currently=`{c}` expected=`{e}`")
     p("")
     p("---")
-    p("Next: `WAVE=2 LIVE=1` to create the 3 COGS accounts.")
+    p("Next: review the **Proposed bucket -> Income leaf mapping** above. If")
+    p("any row says `(NO MATCH)` or you want to override a heuristic pick,")
+    p("tell the agent the correct income account name. Otherwise run")
+    p("`WAVE=2 LIVE=1` to create the 5 COGS accounts.")
 
 
 def wave2_accounts(L, live: bool):
