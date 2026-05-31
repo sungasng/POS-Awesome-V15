@@ -88,9 +88,11 @@ def _precheck_blockers(month_end: date, month_start: date) -> list[str]:
             "posting_date": ["between", [month_start, month_end]]})
         if not had_sales:
             continue
-        n = frappe.db.count("POS Closing Shift", {
-            "pos_profile": prof, "docstatus": 1,
-            "period_end_date": ["between", [month_start, month_end]]})
+        n = frappe.db.sql("""
+            select count(*) from `tabPOS Closing Shift`
+            where pos_profile = %s and docstatus = 1
+              and date(period_end_date) between %s and %s
+        """, (prof, month_start, month_end))[0][0]
         if n == 0:
             no_close.append(prof)
     if no_close:
