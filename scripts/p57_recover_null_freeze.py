@@ -47,7 +47,7 @@ def main():
     # 1. Show current values (raw SQL to expose NULL vs empty)
     p("## 1. Current freeze dates (raw SQL)")
     s = frappe.db.sql(
-        "select name, field, ifnull(value, '<NULL>') as v "
+        "select doctype, field, ifnull(value, '<NULL>') as v "
         "from `tabSingles` "
         "where (doctype, field) in (('Stock Settings','stock_frozen_upto'),"
         "                            ('Accounts Settings','acc_frozen_upto'))",
@@ -56,7 +56,7 @@ def main():
     if not s:
         p("- (no rows found -- defaults apply)")
     for r in s:
-        p(f"- `{r['name']}`.`{r['field']}` = `{r['v']}`")
+        p(f"- `{r['doctype']}`.`{r['field']}` = `{r['v']}`")
     p("")
 
     # 2. Plan
