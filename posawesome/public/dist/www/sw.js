@@ -52,7 +52,7 @@ self.addEventListener("activate", (event) => {
 
 workbox.core.clientsClaim();
 
-const SW_REVISION = 1780329432655;
+const SW_REVISION = 1780444405481;
 workbox.precaching.precacheAndRoute([
 	{ url: "/assets/posawesome/dist/js/posawesome.umd.js", revision: SW_REVISION },
 	{ url: "/assets/posawesome/dist/js/offline/index.js", revision: SW_REVISION },

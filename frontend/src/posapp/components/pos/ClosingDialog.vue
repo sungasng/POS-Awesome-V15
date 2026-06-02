@@ -823,9 +823,10 @@
 							</v-data-table>
 						</v-col>
 					</v-row>
-					<v-row v-if="hasVariance" class="mt-2">
+					<v-row class="mt-2">
 						<v-col cols="12" class="pa-1">
 							<v-alert
+								v-if="hasVariance"
 								:type="varianceSeverity === 'block' ? 'error' : 'warning'"
 								variant="tonal"
 								density="comfortable"
@@ -846,7 +847,7 @@
 							</v-alert>
 							<v-textarea
 								v-model="dialog_data.variance_remarks"
-								:label="__('Variance Remarks (required when variance is non-zero)')"
+								:label="__('Variance Remarks (mandatory when variance is non-zero)')"
 								:placeholder="__('e.g. NGN 500 short - customer paid via transfer not recorded, will reconcile tomorrow')"
 								variant="outlined"
 								density="comfortable"
@@ -855,6 +856,8 @@
 								counter="500"
 								maxlength="500"
 								data-testid="variance-remarks-input"
+								:hint="__('Required when cash variance is non-zero. Will be reviewed by Accounts.')"
+								persistent-hint
 							></v-textarea>
 						</v-col>
 					</v-row>
