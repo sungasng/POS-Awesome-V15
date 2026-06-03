@@ -25,9 +25,9 @@ import re
 # Run this first to list candidate sources:
 #   bench --site sungasmis.v.frappe.cloud list-format-fields "Print Format" name
 # Or open: https://sungasmis.v.frappe.cloud/app/print-format
-SOURCE_FORMAT = "POS Invoice"                # the existing Sungas-branded receipt
-TARGET_FORMAT = "POS Invoice - BOBO GAS"     # the new clone for Itele
-ITELE_PROFILE = "POS - SCL - Itele"          # the POS Profile to bind to
+SOURCE_FORMAT = "Sungas Thermal 58mm"        # confirmed 2026-06-03 via UI
+TARGET_FORMAT = "BOBO GAS Thermal 58mm"      # the new clone for Itele
+ITELE_PROFILE = "POS - Itele"                # POS Profile naming = 'POS - <outlet>'
 
 # Strings to replace in the HTML/header/footer. Case-insensitive whole-string
 # replace -- we use re.IGNORECASE with word-boundary anchors to avoid touching

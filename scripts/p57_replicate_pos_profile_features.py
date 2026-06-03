@@ -19,7 +19,7 @@ Run:
 import frappe  # type: ignore # noqa: F401
 
 # === EDIT THESE BEFORE RUNNING ==============================================
-MASTER_PROFILE = "POS - SCL - Ikeja"
+MASTER_PROFILE = "POS - Ikeja"
 DRY_RUN = True   # set to False to actually apply changes
 
 # Fields safe to replicate (POS Awesome behavioural toggles).
