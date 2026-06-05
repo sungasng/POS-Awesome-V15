@@ -182,4 +182,8 @@ def main():
     print("\n+ VAT structure set up. Next invoice should show a VAT line at 0%.\n")
 
 
+# _BENCH_EXEC_FIX: bench execute "exec(...)" runs scripts with separate
+# globals/locals dicts, so module-level functions can't see other module-level
+# helpers. Copying locals -> globals before invoking main() fixes the scope.
+globals().update(locals())
 main()

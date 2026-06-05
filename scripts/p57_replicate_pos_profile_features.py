@@ -112,4 +112,8 @@ def main():
     print(f"\n+ Applied changes to {len(changes_per_profile)} profiles.\n")
 
 
+# _BENCH_EXEC_FIX: bench execute "exec(...)" runs scripts with separate
+# globals/locals dicts, so module-level functions can't see other module-level
+# helpers. Copying locals -> globals before invoking main() fixes the scope.
+globals().update(locals())
 main()

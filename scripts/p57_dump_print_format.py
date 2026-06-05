@@ -71,4 +71,8 @@ def main():
         print(f"\n... ({len(text) - 4000} more bytes in {OUTPUT_PATH})")
 
 
+# _BENCH_EXEC_FIX: bench execute "exec(...)" runs scripts with separate
+# globals/locals dicts, so module-level functions can't see other module-level
+# helpers. Copying locals -> globals before invoking main() fixes the scope.
+globals().update(locals())
 main()
