@@ -61,6 +61,12 @@ def _ensure_sales_tax_template():
     needs to declare the VAT account at rate 0; the line-level template wins.
     """
     name = SALES_TAX_TEMPLATE_NAME
+    # ERPNext auto-appends company abbr to template names (e.g. 'Foo' -> 'Foo - SCL').
+    abbr = frappe.db.get_value("Company", COMPANY, "abbr") or ""
+    final_name = f"{name} - {abbr}" if abbr else name
+    if frappe.db.exists("Sales Taxes and Charges Template", final_name):
+        print(f"  = Sales Taxes and Charges Template '{final_name}' already exists.")
+        return final_name
     if frappe.db.exists("Sales Taxes and Charges Template", name):
         print(f"  = Sales Taxes and Charges Template '{name}' already exists.")
         return name
@@ -78,9 +84,10 @@ def _ensure_sales_tax_template():
             "description": "VAT (rate determined per item by Item Tax Template)",
         }],
     })
-    doc.insert(ignore_permissions=True)
-    print(f"  + Created Sales Taxes and Charges Template: {name}")
-    return name
+    doc.flags.ignore_links = True
+    doc.insert(ignore_permissions=True, ignore_if_duplicate=True)
+    print(f"  + Created Sales Taxes and Charges Template: {doc.name}")
+    return doc.name
 
 
 def _item_tax_template_name(rate: float, group: str) -> str:
@@ -90,6 +97,11 @@ def _item_tax_template_name(rate: float, group: str) -> str:
 
 def _ensure_item_tax_template(rate: float, group: str) -> str:
     name = _item_tax_template_name(rate, group)
+    abbr = frappe.db.get_value("Company", COMPANY, "abbr") or ""
+    final_name = f"{name} - {abbr}" if abbr else name
+    # ERPNext auto-appends company abbr; check both forms.
+    if frappe.db.exists("Item Tax Template", final_name):
+        return final_name
     if frappe.db.exists("Item Tax Template", name):
         return name
     doc = frappe.get_doc({
@@ -101,9 +113,10 @@ def _ensure_item_tax_template(rate: float, group: str) -> str:
             "tax_rate": rate,
         }],
     })
-    doc.insert(ignore_permissions=True)
-    print(f"  + Created Item Tax Template: {name}")
-    return name
+    doc.flags.ignore_links = True
+    doc.insert(ignore_permissions=True, ignore_if_duplicate=True)
+    print(f"  + Created Item Tax Template: {doc.name}")
+    return doc.name
 
 
 def _attach_template_to_item_group(template_name: str, group: str):
