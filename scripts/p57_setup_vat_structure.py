@@ -37,7 +37,7 @@ import frappe  # type: ignore # noqa: F401
 # The audit script lists existing VAT accounts. Pick the OUTPUT VAT one
 # (root_type=Liability, account_type=Tax). Leaf account, NOT a group.
 COMPANY = "SUNGAS COMPANY LIMITED"  # confirmed from UI on 2026-06-03
-OUTPUT_VAT_ACCOUNT = "VAT - SCL"    # placeholder; replace with audit output
+OUTPUT_VAT_ACCOUNT = "VAT - SCL"    # confirmed via p57_audit_vat_setup 2026-06-05
 
 # Per-item-group VAT rates. Add/edit freely. Groups not listed here will
 # use FALLBACK_RATE.
