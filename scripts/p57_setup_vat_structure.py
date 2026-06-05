@@ -171,6 +171,12 @@ def main():
     fallback_name = _ensure_item_tax_template(FALLBACK_RATE, "Default")
     print(f"  (fallback {FALLBACK_RATE}% template available: '{fallback_name}')")
 
+    # Commit so the templates are visible to the link validator in Step 3.
+    # Without this commit, _attach_template_to_item_group's grp.save() raises
+    # LinkValidationError because the just-created templates aren't yet in
+    # the row that Frappe queries for link existence checks.
+    frappe.db.commit()
+
     print("\n=== Step 3: Attach Item Tax Templates to Item Groups ===")
     for group, tmpl in group_to_template.items():
         _attach_template_to_item_group(tmpl, group)
