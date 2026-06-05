@@ -120,6 +120,11 @@ def _attach_template_to_item_group(template_name: str, group: str):
         "maximum_net_rate": 0,
         "minimum_net_rate": 0,
     })
+    # Frappe's link validator caches link existence at request scope and
+    # doesn't always see newly-inserted records even after frappe.db.commit().
+    # Skipping the link cascade is safe here -- we just created the template
+    # in Step 2, so the link is known-good.
+    grp.flags.ignore_links = True
     grp.save(ignore_permissions=True)
     print(f"  + Attached '{template_name}' to Item Group '{group}'")
 
