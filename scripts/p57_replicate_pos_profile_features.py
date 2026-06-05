@@ -22,29 +22,20 @@ import frappe  # type: ignore # noqa: F401
 MASTER_PROFILE = "POS - Ikeja"
 DRY_RUN = True   # set to False to actually apply changes
 
-# Fields safe to replicate (POS Awesome behavioural toggles).
-# Add to / remove from this list as needed. Run a dry-run first to inspect.
+# Confirmed against POS - Ikeja UI on 2026-06-03. These are the 10 toggles
+# the user enabled during pilot. Keep this list audited -- any addition
+# affects every cashier.
 FIELDS = [
-    "posa_allow_partial_payment",
-    "posa_allow_hold_orders",
-    "posa_allow_user_to_edit_rate",
-    "posa_allow_user_to_edit_additional_discount",
-    "posa_allow_print_draft_invoices",
-    "posa_enable_customer_wallet",
-    "posa_enable_loyalty",
-    "posa_enable_advance_payment",
-    "posa_enable_payment_methods_search",
-    "posa_use_percentage_discount",
-    "posa_round_off_total",
-    "posa_force_reload_items",
-    "posa_default_qty",
-    "posa_hide_closing_shift",
-    "posa_pos_view_mode",
-    # Rate-control:
-    "allow_rate_change_for_items_below_min_rate",
-    # Display tweaks:
-    "hide_unavailable_items",
-    "validate_stock_on_save",
+    "posa_allow_partial_payment",                  # Allow Partial Payment (split tender)
+    "posa_local_storage",                          # Use Browser Local Storage (offline cache)
+    "posa_force_price_from_customer_price_list",   # Force Price from Customer Price List
+    "posa_show_customer_balance",                  # Show Customer Balance in POS
+    "posa_tax_inclusive",                          # Treat prices as tax-inclusive
+    "posa_block_sale_beyond_available_qty",        # Block sale if stock is insufficient
+    "create_pos_invoice_instead_of_sales_invoice", # Use POS Invoice doctype (lighter)
+    "posa_smart_reload_mode",                      # Smart Reload Mode
+    "posa_display_discount_amount",                # Display Discount Amount column
+    "posa_display_discount_percentage",            # Display Discount % column
 ]
 # Fields explicitly DO NOT replicate (per-outlet by definition):
 SKIP_FIELDS = {
