@@ -7,7 +7,22 @@ import json
 import frappe
 from frappe.utils import nowdate, flt
 from frappe import _
-from erpnext.accounts.party import get_party_bank_account
+# ERPNext 15.110+ removed get_party_bank_account from erpnext.accounts.party.
+# Import defensively so POS Awesome still loads on newer ERPNext builds; we
+# fall back to a no-op shim that returns "" -- the function is only used in
+# get_payment_entry_args() to suggest a default bank_account which is purely
+# UX (still editable by the user).
+try:
+    from erpnext.accounts.party import get_party_bank_account  # noqa: F401
+except ImportError:  # ERPNext >= 15.110
+    def get_party_bank_account(party_type, party):  # type: ignore[no-redef]
+        if not (party_type and party):
+            return ""
+        return frappe.db.get_value(
+            "Bank Account",
+            {"party_type": party_type, "party": party, "is_default": 1},
+            "name",
+        ) or ""
 from erpnext.accounts.doctype.payment_request.payment_request import (
     get_dummy_message,
     get_existing_payment_request_amount,
