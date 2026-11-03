@@ -22,6 +22,9 @@ import frappe
 from frappe.utils import flt, getdate, today
 
 
+ALL_GROUPS = "All Customer Groups"
+
+
 def _get_customer_meta(customer: str) -> dict:
     if not customer:
         return {}
@@ -55,6 +58,32 @@ def _get_pos_profile_territory(pos_profile: str | None) -> str | None:
     return None
 
 
+def _walk_up_territory_chain(territory: str | None, max_hops: int = 8) -> list[str]:
+    """
+    Return [outlet_leaf, parent, grandparent, ..., root] for the Territory
+    tree starting at `territory`. Caps at `max_hops` to defend against
+    accidental cycles in user-edited trees.
+
+    Pricing Wave A — P-1 ("Regional Base + Plant Override"): the resolver
+    must try the outlet leaf first, then progressively wider parents
+    (Region, then Nigeria), so that a regional base price covers every
+    plant that does not carry an explicit override row.
+    """
+    chain: list[str] = []
+    seen: set[str] = set()
+    cur = territory
+    hops = 0
+    while cur and cur not in seen and hops < max_hops:
+        chain.append(cur)
+        seen.add(cur)
+        parent = frappe.db.get_value("Territory", cur, "parent_territory")
+        if not parent or parent == cur:
+            break
+        cur = parent
+        hops += 1
+    return chain
+
+
 def find_applicable_tier(
     item_code: str,
     customer_group: str | None,
@@ -70,14 +99,20 @@ def find_applicable_tier(
         NOT the customer's registered territory. (Where the cylinder is filled
         determines the price, not where the customer lives.)
 
-    Lookup precedence:
-        1. Exact (item_code, customer_group, outlet_territory).
-        2. Tier with EMPTY territory (i.e. "any outlet" pricing, only valid
-           if the seeder explicitly leaves territory blank).
+    Pricing Wave A — P-1 ("Regional Base + Plant Override"):
+        Lookup precedence (first hit wins):
+            1. Exact tier on the outlet leaf territory          (Plant Override)
+            2. Walk up parent_territory chain                   (Regional Base)
+            3. National row (territory = empty / blank)         (legacy safety valve)
 
-    Cross-territory fallback is INTENTIONALLY DISABLED. Pedro selling
-    Bulk gas must not silently price at Ekehuan's Bulk rate; a missing
-    (group, outlet) tier means "no price -> no sale" per user directive.
+        Backward-compatible with the 64 production rows (all seeded with a
+        leaf territory), because levels 2 and 3 only fire when level 1 finds
+        nothing. Operationally this means: drop a single row at Region level
+        and every plant under it inherits the price unless overridden.
+
+        Cross-sibling fallback remains DISABLED. Pedro never silently picks
+        up Ekehuan's price unless both plants share a common parent that
+        carries an explicit Regional Base row.
     """
     if not item_code or not customer_group:
         return None
@@ -114,40 +149,71 @@ def find_applicable_tier(
         "valid_from", "valid_to", "territory",
     ]
 
-    # 1. Tier scoped to the outlet's territory (the only path Sungas uses).
-    if territory:
-        scoped = frappe.get_all(
+    # Patch 0017: a row for the customer's own group wins; otherwise a row
+    # for "All Customer Groups" (one price for every customer type) applies.
+    groups = [customer_group] + ([ALL_GROUPS] if customer_group != ALL_GROUPS else [])
+
+    # 1+2. Walk the territory chain from outlet leaf up to the root.
+    #      First level that has a matching row wins.
+    for level in _walk_up_territory_chain(territory):
+        for grp in groups:
+            scoped = frappe.get_all(
+                "LPG Outlet Price Tier",
+                filters={
+                    "item_code": item_code,
+                    "customer_group": grp,
+                    "territory": level,
+                    "enabled": 1,
+                },
+                fields=fields,
+            )
+            best = _best(scoped)
+            if best:
+                return best
+
+    # 3. Optional "global / any-outlet" tier: rows with NO territory set.
+    #    Safety valve for SKUs priced uniformly nationwide without a
+    #    Territory tree edit. Production has none of these today.
+    for grp in groups:
+        global_rows = frappe.get_all(
             "LPG Outlet Price Tier",
             filters={
                 "item_code": item_code,
-                "customer_group": customer_group,
-                "territory": territory,
+                "customer_group": grp,
                 "enabled": 1,
             },
+            or_filters=[
+                ["territory", "is", "not set"],
+                ["territory", "=", ""],
+            ],
             fields=fields,
         )
-        best = _best(scoped)
+        best = _best(global_rows)
         if best:
             return best
+    return None
 
-    # 2. Optional "global / any-outlet" tier: only rows with NO territory set.
-    # This is a SAFETY VALVE for SKUs priced uniformly nationwide via a single
-    # row with territory='' / None. Seeded rows from the spreadsheet always
-    # carry a territory, so they cannot match here.
-    global_rows = frappe.get_all(
-        "LPG Outlet Price Tier",
-        filters={
-            "item_code": item_code,
-            "customer_group": customer_group,
-            "enabled": 1,
-        },
-        or_filters=[
-            ["territory", "is", "not set"],
-            ["territory", "=", ""],
-        ],
-        fields=fields,
-    )
-    return _best(global_rows)
+
+def _policy_enabled() -> bool:
+    """
+    Read `Sungas Pricing Policy.policy_enabled` once. When the policy doctype
+    isn't installed (e.g., fresh local dev) we default to enabled so the
+    pricing guard never silently disappears in production.
+    """
+    try:
+        if not frappe.db.exists("DocType", "Sungas Pricing Policy"):
+            return True
+        val = frappe.db.get_single_value("Sungas Pricing Policy", "policy_enabled")
+        return bool(val) if val is not None else True
+    except Exception:
+        return True
+
+
+# Customer groups for which a non-zero rate is mandatory at save time
+# (Pricing Wave A — P-4 hard zero-price block). Hard-coded by design: these
+# are the LPG-style sales channels Section 1 governs. Other groups (e.g.
+# 'Internal Transfer', 'Inter-Branch') legitimately move stock at 0.
+_LPG_PRICED_GROUPS = {"Retail", "Bulk", "Industrial", "Wholesale", "Commercial"}
 
 
 def apply_tiered_pricing(doc, method=None):
@@ -165,8 +231,20 @@ def apply_tiered_pricing(doc, method=None):
     save is rejected with a clear message. Items that have NO tier rows at
     all (accessories, cylinders, cookers) fall through to the normal price
     list rate.
+
+    Pricing Wave A — P-4 ("Hard zero-price block at POS"):
+        After tier resolution, any row whose final `rate <= 0` causes the
+        save to fail when the customer belongs to an LPG-priced group
+        (Retail / Bulk / Industrial / Wholesale / Commercial). This closes
+        the loophole where a non-tiered SKU (cylinder, regulator) slipped
+        through with a missing standard Item Price.
+
+    The whole guard short-circuits cleanly when
+    `Sungas Pricing Policy.policy_enabled` is unchecked.
     """
     if not getattr(doc, "items", None):
+        return
+    if not _policy_enabled():
         return
 
     meta = _get_customer_meta(getattr(doc, "customer", None))
@@ -177,6 +255,7 @@ def apply_tiered_pricing(doc, method=None):
 
     any_rate_changed = False
     missing: list[tuple[str, str]] = []  # (item_code, reason)
+    zero_rate_rows: list[tuple[str, float]] = []  # (item_code, rate)
 
     for row in doc.items:
         # Does this item have ANY tier rows configured? If not, it's a
@@ -185,43 +264,49 @@ def apply_tiered_pricing(doc, method=None):
             "LPG Outlet Price Tier",
             {"item_code": row.item_code, "enabled": 1},
         )
-        if not has_any_tier:
-            continue
 
-        # Tiered item: customer_group is mandatory.
-        if not customer_group:
-            missing.append((row.item_code, "no customer / customer_group"))
-            continue
+        if has_any_tier:
+            # Tiered item: customer_group is mandatory.
+            if not customer_group:
+                missing.append((row.item_code, "no customer / customer_group"))
+                continue
 
-        tier = find_applicable_tier(
-            item_code=row.item_code,
-            customer_group=customer_group,
-            territory=outlet_territory,
-            qty=flt(getattr(row, "qty", 0) or 0),
-            posting_date=posting_date,
-        )
-        if not tier:
-            missing.append((
-                row.item_code,
-                f"no tier for (customer_group={customer_group!r}, "
-                f"territory={outlet_territory!r})",
-            ))
-            continue
+            tier = find_applicable_tier(
+                item_code=row.item_code,
+                customer_group=customer_group,
+                territory=outlet_territory,
+                qty=flt(getattr(row, "qty", 0) or 0),
+                posting_date=posting_date,
+            )
+            if not tier:
+                missing.append((
+                    row.item_code,
+                    f"no tier for (customer_group={customer_group!r}, "
+                    f"territory={outlet_territory!r})",
+                ))
+                continue
 
-        tier_rate = flt(tier["rate"])
-        if tier_rate <= 0:
-            missing.append((row.item_code, f"tier {tier['name']} has rate=0"))
-            continue
+            tier_rate = flt(tier["rate"])
+            if tier_rate <= 0:
+                missing.append((row.item_code, f"tier {tier['name']} has rate=0"))
+                continue
 
-        if flt(getattr(row, "rate", 0)) != tier_rate:
-            row.price_list_rate = tier_rate
-            row.rate = tier_rate
-            any_rate_changed = True
-            if hasattr(row, "posa_offers"):
-                existing = row.posa_offers or ""
-                marker = f"LPG-Tier:{tier['name']}"
-                if marker not in existing:
-                    row.posa_offers = (existing + "," + marker).strip(",")
+            if flt(getattr(row, "rate", 0)) != tier_rate:
+                row.price_list_rate = tier_rate
+                row.rate = tier_rate
+                any_rate_changed = True
+                if hasattr(row, "posa_offers"):
+                    existing = row.posa_offers or ""
+                    marker = f"LPG-Tier:{tier['name']}"
+                    if marker not in existing:
+                        row.posa_offers = (existing + "," + marker).strip(",")
+
+        # P-4: regardless of tiered-ness, refuse a zero rate for LPG-priced
+        # customer groups. This catches the case where a non-tiered SKU
+        # (e.g. cylinder) has no Item Price defined and would otherwise
+        # submit at 0.
+        if customer_group in _LPG_PRICED_GROUPS and flt(getattr(row, "rate", 0)) <= 0:
+            zero_rate_rows.append((row.item_code, flt(getattr(row, "rate", 0))))
 
     if missing:
         lines = "\n".join(f"  - {ic}: {reason}" for ic, reason in missing)
@@ -233,6 +318,18 @@ def apply_tiered_pricing(doc, method=None):
                 "customer / outlet whose group + territory has a price."
             ).format(lines),
             title="No LPG Tier Price",
+        )
+
+    if zero_rate_rows:
+        lines = "\n".join(f"  - {ic}: rate={r}" for ic, r in zero_rate_rows)
+        frappe.throw(
+            (
+                "Zero-price items are blocked for {grp} customers under "
+                "Pricing Wave A (P-4). Set a non-zero price (LPG Outlet "
+                "Price Tier for governed SKUs, or a standard Item Price "
+                "for accessories) before submitting:\n{lines}"
+            ).format(grp=customer_group, lines=lines),
+            title="Zero Price Blocked",
         )
 
     if any_rate_changed and hasattr(doc, "calculate_taxes_and_totals"):

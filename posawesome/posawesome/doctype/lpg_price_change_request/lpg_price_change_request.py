@@ -13,6 +13,8 @@ class LPGPriceChangeRequest(Document):
         self._stamp_current_rate()
         self._validate_qty_window()
         self._track_approval_stamps()
+        from posawesome.posawesome.api.lpg_pricing_guards import assert_not_below_cost
+        assert_not_below_cost(self.item_code, self.proposed_rate)
 
     def on_submit(self):
         # Submit only allowed when fully approved (state machine enforces this).
