@@ -177,19 +177,12 @@ class LPGBulkPriceUpload(Document):
                 row.flag_status = "Flagged"
             else:
                 row.flag_status = "OK"
-            if row.flag_status != "OK" and not (row.justification or "").strip():
+            if row.flag_status == "Flagged" and not (row.justification or "").strip():
                 missing.append(
                     f"  Row {idx} ({row.item_code} @ {row.territory or 'N/A'}): "
                     f"|Δ|={mag:.2f}% needs justification."
                 )
-        from posawesome.posawesome.api.lpg_pricing_guards import below_cost_message
-        below = [
-            f"  Row {idx}: {msg}"
-            for idx, row in enumerate(self.rows or [], start=1)
-            for msg in [below_cost_message(row.item_code, row.new_rate)] if msg
-        ]
-        if below:
-            frappe.throw("\n".join(below), title=_("Below Cost Price"))
+        self._mark_below_cost()
         if missing:
             frappe.throw(
                 _(
@@ -197,6 +190,26 @@ class LPGBulkPriceUpload(Document):
                 ).format(lines="\n".join(missing)),
                 title=_("Justification Required"),
             )
+
+    # Patch posa-0020: below-cost rows save (marked, with cost + gap) but cannot leave Draft.
+    def _mark_below_cost(self) -> None:
+        from posawesome.posawesome.api.lpg_pricing_guards import item_unit_cost
+        below = []
+        for idx, row in enumerate(self.rows or [], start=1):
+            cost = item_unit_cost(row.item_code) if row.item_code else None
+            row.unit_cost = flt(cost)
+            row.cost_gap = 0
+            if cost is not None and flt(row.new_rate) < cost:
+                row.flag_status = "Below Cost"
+                row.cost_gap = flt(cost - flt(row.new_rate), 2)
+                below.append(f"Row {idx} {row.item_code}: NGN {flt(row.new_rate):,.2f} is NGN "
+                             f"{row.cost_gap:,.2f} below unit cost NGN {cost:,.2f}")
+        if below and (self.workflow_state or "Draft") not in ("Draft", "Rejected"):
+            frappe.throw(
+                _("Fix or remove the rows marked Below Cost before submitting:<br>{0}<br><br>"
+                  "To sell below cost, Finance must first write the stock down to net realisable value "
+                  "(Stock Reconciliation, valuation only, approved by Head of Finance).").format("<br>".join(below)),
+                title=_("Below Cost Price"))
 
     # ------------------------------------------------------------------
     # Step 5 — workflow approval stamps
