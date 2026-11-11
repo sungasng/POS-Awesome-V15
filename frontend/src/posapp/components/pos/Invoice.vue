@@ -1571,6 +1571,13 @@ export default {
 	},
 
 	mounted() {
+		// Sungas posa-0018: live price updates from approved price changes.
+		this._sungasPriceTimer = null;
+		this._sungasOnPrices = () => {
+			clearTimeout(this._sungasPriceTimer);
+			this._sungasPriceTimer = setTimeout(() => this.sungas_reprice_open_cart(), 1500);
+		};
+		frappe.realtime?.on("sungas_prices_changed", this._sungasOnPrices);
 		// Load saved column preferences
 		this.loadColumnPreferences();
 		// Restore saved invoice height
@@ -1614,6 +1621,8 @@ export default {
 	},
 	// Cleanup event listeners before component is destroyed
 	beforeUnmount() {
+		frappe.realtime?.off("sungas_prices_changed", this._sungasOnPrices);
+		clearTimeout(this._sungasPriceTimer);
 		if (typeof this.stockUnsubscribe === "function") {
 			this.stockUnsubscribe();
 			this.stockUnsubscribe = null;

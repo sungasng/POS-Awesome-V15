@@ -82,6 +82,7 @@
 				</v-list-item>
 			</template>
 		</v-autocomplete>
+		<div v-if="tierInfo" class="sungas-tier-info" data-testid="pos-customer-price-info">{{ tierInfo }}</div>
 
 		<!-- Update customer modal -->
 		<div class="mt-4">
@@ -91,6 +92,15 @@
 </template>
 
 <style scoped>
+.sungas-tier-info {
+	margin-top: 4px;
+	padding: 4px 10px;
+	border-radius: 6px;
+	font-size: 0.85rem;
+	font-weight: 600;
+	background: rgba(25, 118, 210, 0.08);
+	color: #0d47a1;
+}
 .customer-input-wrapper {
 	width: 100%;
 	max-width: 100%;
@@ -377,6 +387,41 @@ export default {
 
 		const busHandlers = [];
 
+		// Sungas posa-0018: show the customer's group, which price applies and the LPG rate.
+		const tierInfo = ref("");
+		const posProfileName = ref(null);
+		const NATIONAL = ["Nigeria", "All Territories"];
+		const tierLabel = (m, row) => {
+			if (!row || !row.has_tier) return `${m.customer_group || __("No group")} · ${__("no LPG price for this group")}`;
+			const t = row.matched_territory;
+			const level = !t || NATIONAL.includes(t)
+				? __("National price")
+				: t === m.outlet_territory ? __("{0} plant price", [t]) : __("{0} regional price", [t]);
+			return `${m.customer_group} · ${level} · LPG ₦${Number(row.rate).toLocaleString()}/kg`;
+		};
+		const refreshTierInfo = _.debounce(async () => {
+			if (!internalCustomer.value || !posProfileName.value || !navigator.onLine) {
+				tierInfo.value = "";
+				return;
+			}
+			try {
+				const r = await frappe.call({
+					method: "posawesome.posawesome.api.lpg_pricing.get_tier_rates_bulk",
+					args: { items: [{ item_code: "LPG-REFILL", qty: 1 }], customer: internalCustomer.value,
+						pos_profile: posProfileName.value },
+				});
+				const m = r.message || {};
+				tierInfo.value = tierLabel(m, (m.rows || [])[0]);
+			} catch (e) {
+				tierInfo.value = "";
+			}
+		}, 400);
+		const setProfile = (data) => {
+			posProfileName.value = data?.pos_profile?.name || data?.name || posProfileName.value;
+			refreshTierInfo();
+		};
+		watch(internalCustomer, () => refreshTierInfo());
+
 		const registerBus = (event, handler) => {
 			if (eventBus && typeof eventBus.on === "function") {
 				eventBus.on(event, handler);
@@ -387,12 +432,15 @@ export default {
 		onMounted(async () => {
 			await customersStore.searchCustomers("");
 
+			frappe.realtime?.on("sungas_prices_changed", refreshTierInfo);
 			registerBus("register_pos_profile", async (data) => {
+				setProfile(data);
 				customersStore.setPosProfile(data);
 				await customersStore.get_customer_names();
 			});
 
 			registerBus("payments_register_pos_profile", async (data) => {
+				setProfile(data);
 				customersStore.setPosProfile(data);
 				await customersStore.get_customer_names();
 			});
@@ -417,6 +465,7 @@ export default {
 		});
 
 		onBeforeUnmount(() => {
+			frappe.realtime?.off("sungas_prices_changed", refreshTierInfo);
 			busHandlers.forEach(({ event, handler }) => {
 				eventBus?.off(event, handler);
 			});
@@ -425,6 +474,7 @@ export default {
 		});
 
 		return {
+			tierInfo,
 			customerDropdown,
 			filteredCustomers,
 			loadingCustomers,

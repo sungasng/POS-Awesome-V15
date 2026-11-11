@@ -4233,6 +4233,29 @@ export default {
 	// Sungas Phase-5: fetch LPG Outlet Price Tier rates for every cart row
 	// in one round-trip, mutate item.rate in place, and emit a banner if any
 	// row has no tier configured for this customer.
+	// Sungas posa-0018: an approved price change re-prices the open cart and tells the cashier.
+	async sungas_reprice_open_cart() {
+		const items = this.items || [];
+		if (!this.customer || !items.length) return;
+		const before = new Map(items.map((it) => [it.posa_row_id || it.item_code, Number(it.rate)]));
+		await this.apply_tier_pricing_to_cart();
+		const changes = [];
+		items.forEach((it) => {
+			const old = before.get(it.posa_row_id || it.item_code);
+			if (old !== undefined && old !== Number(it.rate)) {
+				changes.push(
+					`${it.item_name || it.item_code}: ₦${old.toLocaleString()} → ₦${Number(it.rate).toLocaleString()}`,
+				);
+			}
+		});
+		if (changes.length) {
+			this.eventBus?.emit("show_message", {
+				title: __("Price changed: {0}", [changes.join(", ")]),
+				color: "warning",
+				groupId: "sungas-price-changed",
+			});
+		}
+	},
 	async apply_tier_pricing_to_cart() {
 		if (!this.customer) return { all_have_tier: false, skipped: "no-customer" };
 		const items = this.items || [];

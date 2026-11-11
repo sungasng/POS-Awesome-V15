@@ -4884,6 +4884,12 @@ export default {
 	},
 
 	async mounted() {
+		// Sungas posa-0018: refresh item list prices when an approved price change lands.
+		this._sungasOnPrices = () => {
+			clearTimeout(this._sungasPriceTimer);
+			this._sungasPriceTimer = setTimeout(() => this.get_items(true), 2000);
+		};
+		frappe.realtime?.on("sungas_prices_changed", this._sungasOnPrices);
 		this.$watch(
 			() => this.selectedCustomer,
 			(newCustomer) => {
@@ -4932,6 +4938,8 @@ export default {
 	},
 
 	beforeUnmount() {
+		frappe.realtime?.off("sungas_prices_changed", this._sungasOnPrices);
+		clearTimeout(this._sungasPriceTimer);
 		// Clear interval when component is destroyed
 		this.stopBackgroundSyncScheduler();
 
