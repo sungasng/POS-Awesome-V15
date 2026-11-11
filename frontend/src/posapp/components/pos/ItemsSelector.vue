@@ -1415,7 +1415,7 @@ export default {
 
 			const key = [
 				this.pos_profile.name,
-				this.active_price_list,
+				this.sungas_details_cache_key,
 				items.map((i) => i.item_code).join(","),
 			].join(":");
 
@@ -1515,7 +1515,7 @@ export default {
 				const itemCodes = vm.displayedItems.map((it) => it.item_code);
 				const cacheResult = await getCachedItemDetails(
 					vm.pos_profile.name,
-					vm.active_price_list,
+					vm.sungas_details_cache_key,
 					itemCodes,
 				);
 				const updates = [];
@@ -1588,7 +1588,7 @@ export default {
 				vm.$nextTick(async () => {
 					updates.forEach(({ item, upd }) => Object.assign(item, upd));
 					updateLocalStockCache(details);
-					saveItemDetailsCache(vm.pos_profile.name, vm.active_price_list, details);
+					saveItemDetailsCache(vm.pos_profile.name, vm.sungas_details_cache_key, details);
 					if (
 						vm.pos_profile &&
 						vm.pos_profile.posa_local_storage &&
@@ -2680,7 +2680,7 @@ export default {
 			};
 			const cacheResult = await getCachedItemDetails(
 				vm.pos_profile.name,
-				vm.active_price_list,
+				vm.sungas_details_cache_key,
 				itemCodes,
 				forceRefresh ? 0 : undefined,
 			);
@@ -2824,7 +2824,7 @@ export default {
 					});
 
 					updateLocalStockCache(details);
-					saveItemDetailsCache(vm.pos_profile.name, vm.active_price_list, details);
+					saveItemDetailsCache(vm.pos_profile.name, vm.sungas_details_cache_key, details);
 
 					if (
 						vm.pos_profile &&
@@ -4718,6 +4718,10 @@ export default {
 		},
 		active_price_list() {
 			return this.customer_price_list || (this.pos_profile && this.pos_profile.selling_price_list);
+		},
+		// Sungas posa-0019: LPG tier rates depend on the customer, so cache item details per customer too.
+		sungas_details_cache_key() {
+			return `${this.active_price_list}|${this.customer || ""}`;
 		},
 		isLoadingOrSyncing() {
 			return this.loading || this.isBackgroundLoading || this.refreshInFlight;
