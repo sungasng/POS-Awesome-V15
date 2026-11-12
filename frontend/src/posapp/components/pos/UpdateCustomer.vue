@@ -139,6 +139,8 @@
 									:label="frappe._('Customer Group') + ' *'"
 									v-model="group"
 									:items="groups"
+									readonly
+									:hint="__('Set by the Commercial Desk')"
 									class="pos-themed-input"
 									:no-data-text="__('Group not found')"
 									hide-details
@@ -187,6 +189,14 @@
 					</v-container>
 				</v-card-text>
 				<v-card-actions>
+					<v-btn
+						v-if="customer_id"
+						color="primary"
+						variant="tonal"
+						data-testid="pos-request-group-change"
+						@click="request_group_change"
+						>{{ __("Request group change") }}</v-btn
+					>
 					<v-spacer></v-spacer>
 					<v-btn color="error" theme="dark" @click="confirm_close">{{ __("Close") }}</v-btn>
 					<v-btn color="success" theme="dark" @click="submit_dialog">{{ __("Submit") }}</v-btn>
@@ -427,6 +437,34 @@ export default {
 			this.confirmDialog = false;
 			this.close_dialog();
 		},
+		// Sungas posa-0021: the Commercial Desk decides group changes.
+		request_group_change() {
+			const vm = this;
+			frappe.prompt(
+				[
+					{ fieldname: "requested_group", label: __("Move to group"), fieldtype: "Select", reqd: 1,
+					  options: vm.groups.filter((g) => g !== vm.group).join("\n") },
+					{ fieldname: "business_type", label: __("Business type"), fieldtype: "Select",
+					  options: "\nRestaurant / Hotel\nIndustrial / Factory\nSchool / Hospital / Institution\nReseller / Retailer\nOther" },
+					{ fieldname: "expected_monthly_kg", label: __("Expected kg per month"), fieldtype: "Float" },
+					{ fieldname: "justification", label: __("Why should they move?"), fieldtype: "Small Text", reqd: 1 },
+				],
+				(v) =>
+					frappe
+						.call({
+							method: "sungas.commercial_desk.request_group_change",
+							args: { customer: vm.customer_id, requested_from: vm.pos_profile && vm.pos_profile.name, ...v },
+						})
+						.then((r) =>
+							vm.eventBus.emit("show_message", {
+								title: __("Request {0} sent to the Commercial Desk", [r.message]),
+								color: "success",
+							}),
+						),
+				__("Request group change"),
+				__("Send"),
+			);
+		},
 		close_dialog() {
 			this.customerDialog = false;
 			this.clear_customer();
@@ -442,7 +480,7 @@ export default {
 			this.email_id = "";
 			this.referral_code = "";
 			this.birthday = "";
-			this.group = frappe.defaults.get_user_default("Customer Group");
+			this.group = "Retail"; // Sungas posa-0021: new customers start as Retail
 			this.territory = frappe.defaults.get_user_default("Territory");
 			this.customer_id = "";
 			this.customer_type = "Individual";
@@ -737,7 +775,7 @@ export default {
 		this.getCustomerGroups();
 		this.getCustomerTerritorys();
 		this.getGenders();
-		this.group = frappe.defaults.get_user_default("Customer Group");
+		this.group = "Retail"; // Sungas posa-0021: new customers start as Retail
 		this.territory = frappe.defaults.get_user_default("Territory");
 	},
 };
