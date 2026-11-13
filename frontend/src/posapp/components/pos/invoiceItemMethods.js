@@ -4273,7 +4273,11 @@ export default {
 		const items = this.items || [];
 		if (!items.length) return { all_have_tier: true, rows: [] };
 
-		const payload = items.map((it) => ({ item_code: it.item_code, qty: it.qty }));
+		// Sungas posa-0024: tier bands are in kg (qty x cylinder size); one row back per cart line, in order.
+		const payload = items.map((it) => ({
+			item_code: it.item_code,
+			qty: Number(it.qty || 0) * Number(it.conversion_factor || 1),
+		}));
 		// eslint-disable-next-line no-console
 		console.log("[LPG-Tier] apply_tier_pricing_to_cart firing", {
 			customer: this.customer,
@@ -4308,8 +4312,8 @@ export default {
 		this._lpgTierByCode = new Map();
 		this._lpgNonTieredByCode = new Set();
 
-		rows.forEach((row) => {
-			const it = items.find((x) => x.item_code === row.item_code);
+		rows.forEach((row, idx) => {
+			const it = items[idx] && items[idx].item_code === row.item_code ? items[idx] : null;
 			if (!it) return;
 			// Sungas Phase-5: items with NO tier rows at all get parked
 			// in _lpgNonTieredByCode so the PAY-gate (lpgRowsMissingTier)
@@ -4336,7 +4340,7 @@ export default {
 				// helper also calls calc_stock_qty which would corrupt
 				// the row's stock_qty.
 				const currentAmount = Number(it.posa_amount_due) || 0;
-				if (currentAmount < newAmount) {
+				if (currentAmount < newAmount || Number(it.conversion_factor || 1) !== 1) {
 					it.posa_amount_due = newAmount;
 				}
 			} else {
@@ -4740,7 +4744,11 @@ export default {
 		if (!item) {
 			return;
 		}
-		return this.queueItemTask(item, "calc_uom", () => calcUom(item, value, this));
+		// Sungas posa-0024: after a size change, price the line from the customer's kg tier.
+		return this.queueItemTask(item, "calc_uom", async () => {
+			await calcUom(item, value, this);
+			if (this.customer) await this.apply_tier_pricing_to_cart();
+		});
 	},
 
 	// Calculate stock quantity for an item (simplified - validation handled centrally)

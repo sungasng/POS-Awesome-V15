@@ -990,8 +990,12 @@ def get_item_detail(item, doc=None, warehouse=None, price_list=None, company=Non
         doc,
         overwrite_warehouse=False,
     )
-    if item.get("is_stock_item") and warehouse:
+    # Sungas posa-0024: stock + warehouse always from the till's warehouse (not the item default, e.g. Stores - SCL).
+    is_stock_item = cint(frappe.db.get_value("Item", item_code, "is_stock_item"))
+    res["is_stock_item"] = is_stock_item
+    if is_stock_item and warehouse:
         res["actual_qty"] = get_stock_availability(item_code, warehouse)
+        res["warehouse"] = warehouse
     res["max_discount"] = max_discount
     res["batch_no_data"] = batch_no_data
     res["serial_no_data"] = serial_no_data
