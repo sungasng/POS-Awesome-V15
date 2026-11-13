@@ -837,7 +837,7 @@ export default {
 						}
 					} else {
 						// Only refresh prices for visible items when smart reload is enabled
-						this.$nextTick(() => this.refreshPricesForVisibleItems());
+						this.$nextTick(() => this.refreshPricesForVisibleItems({ forceRefresh: true }));
 					}
 				} else {
 					// Fall back to full reload
@@ -859,7 +859,7 @@ export default {
 			// When the customer changes, avoid reloading all items.
 			// Simply refresh prices for visible items only
 			if (this.itemsLoaded && this.displayedItems && this.displayedItems.length > 0) {
-				this.$nextTick(() => this.refreshPricesForVisibleItems());
+				this.$nextTick(() => this.refreshPricesForVisibleItems({ forceRefresh: true }));
 			} else {
 				if (this.pos_profile && (!this.pos_profile.posa_local_storage || !this.storageAvailable)) {
 					this.get_items(true);
@@ -1501,11 +1501,13 @@ export default {
 				this.itemDetailsRequestCache.result = null;
 			}
 		},
-		async refreshPricesForVisibleItems() {
+		async refreshPricesForVisibleItems(options = {}) {
 			const vm = this;
 			if (!vm.displayedItems || vm.displayedItems.length === 0) return;
 
+			// Sungas posa-0025: never drop a customer-change refresh; run it again once the current one ends.
 			if (vm.refreshInFlight) {
+				vm._sungasRefreshAgain = vm._sungasRefreshAgain || options;
 				return;
 			}
 
@@ -1517,6 +1519,7 @@ export default {
 					vm.pos_profile.name,
 					vm.sungas_details_cache_key,
 					itemCodes,
+					options.forceRefresh ? 0 : undefined,
 				);
 				const updates = [];
 
@@ -1555,6 +1558,7 @@ export default {
 					cacheResult.missing.includes(it.item_code),
 				);
 
+				if (options.forceRefresh) vm.itemDetailsRequestCache.result = null;
 				const details = await vm.fetchItemDetails(itemsToFetch);
 				details.forEach((updItem) => {
 					const item = vm.displayedItems.find((it) => it.item_code === updItem.item_code);
@@ -1607,9 +1611,14 @@ export default {
 			} catch (err) {
 				if (err.name !== "AbortError") {
 					console.error("Error fetching item details:", err);
+				} else {
+					vm._sungasRefreshAgain = vm._sungasRefreshAgain || options;
 				}
 			} finally {
 				vm.refreshInFlight = false;
+				const again = vm._sungasRefreshAgain;
+				vm._sungasRefreshAgain = null;
+				if (again) vm.$nextTick(() => vm.refreshPricesForVisibleItems(again));
 			}
 		},
 

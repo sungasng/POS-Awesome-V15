@@ -430,10 +430,15 @@ export function useItemAddition() {
 		if (!item.uom) {
 			item.uom = item.stock_uom;
 		}
+		// Sungas posa-0025: LPG sold by cylinder size -> every tap opens its own line (never merge).
+		const newLine =
+			context.new_line ||
+			item.item_code === "LPG-REFILL" ||
+			(item.item_uoms || []).some((u) => String(u?.uom || "").endsWith(" Cyl"));
 		let index = -1;
 		let mergeTarget = null;
 		const requireBatchMatch = !(context.pos_profile.posa_auto_set_batch && item.has_batch_no);
-		if (!context.new_line) {
+		if (!newLine) {
 			// For normal additions (not returns), only merge with existing positive quantity lines
 			// This ensures that negative quantities (returns) are kept separate from positive sales
 			mergeTarget = findMergeTarget(context, item, requireBatchMatch);
@@ -441,7 +446,7 @@ export function useItemAddition() {
 		}
 
 		let new_item;
-		if (index === -1 || context.new_line) {
+		if (index === -1 || newLine) {
 			new_item = getNewItem(item, context);
 			new_item._needs_update = true; // Mark new item for background update
 
@@ -481,12 +486,12 @@ export function useItemAddition() {
 			}
 
 			// Re-check in case other async updates modified the cart meanwhile
-			if (!context.new_line) {
+			if (!newLine) {
 				mergeTarget = findMergeTarget(context, item, requireBatchMatch);
 				index = mergeTarget ? mergeTarget.index : -1;
 			}
 
-			if (index === -1 || context.new_line) {
+			if (index === -1 || newLine) {
 				if (context.invoiceStore) {
 					// Use batching
 					return new Promise((resolve) => {
@@ -502,7 +507,7 @@ export function useItemAddition() {
 							);
 						});
 
-						if (pendingIndex !== -1 && !context.new_line) {
+						if (pendingIndex !== -1 && !newLine) {
 							// Merge with pending item
 							const pendingItem = pendingItems[pendingIndex];
 							if (context.isReturnInvoice) {
