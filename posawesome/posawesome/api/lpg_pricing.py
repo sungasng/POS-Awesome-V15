@@ -368,7 +368,9 @@ def override_item_detail_with_tier(item_detail: dict, customer: str | None,
         return item_detail
 
     outlet_territory = _get_pos_profile_territory(pos_profile)
-    qty = flt(item_detail.get("qty") or 1)
+    # Sungas posa-0023: tiers are per kg; a cylinder unit (e.g. "50kg Cyl") = kg rate x size.
+    cf = flt(item_detail.get("conversion_factor") or 1) or 1
+    qty = flt(item_detail.get("qty") or 1) * cf
 
     tier = find_applicable_tier(
         item_code=item_code,
@@ -384,6 +386,7 @@ def override_item_detail_with_tier(item_detail: dict, customer: str | None,
     if tier_rate <= 0:
         return item_detail
 
+    tier_rate = flt(tier_rate * cf, 2)
     # Stamp the tier rate on every field POS Awesome reads.
     item_detail["rate"] = tier_rate
     item_detail["price_list_rate"] = tier_rate

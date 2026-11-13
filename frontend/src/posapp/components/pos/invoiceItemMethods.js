@@ -2263,6 +2263,8 @@ export default {
 				discount_percentage: flt(item.discount_percentage),
 				batch_no: item.batch_no,
 				posa_notes: item.posa_notes,
+				// Sungas posa-0023: cylinder the kg / amount line goes into (prints on receipt).
+				sungas_fill_into: item.sungas_fill_into,
 				posa_delivery_date: this.formatDateForBackend(item.posa_delivery_date),
 			};
 
@@ -3228,6 +3230,16 @@ export default {
 			// last gate before the cashier sees the Payments screen.)
 			try {
 				await this.apply_tier_pricing_to_cart();
+				const cylErr = this.lpgCylinderProblems();
+				if (cylErr.length) {
+					this.eventBus.emit("show_message", {
+						title: __("Cylinder details needed"),
+						detail: cylErr.join(" "),
+						color: "error",
+						groupId: "pay-cylinder",
+					});
+					return;
+				}
 				const missing = this.lpgRowsMissingTier ? this.lpgRowsMissingTier() : [];
 				if (missing.length) {
 					this.eventBus.emit("show_message", {
@@ -4309,11 +4321,13 @@ export default {
 				this._lpgTierByCode.set(row.item_code, row);
 				// Use the framework-blessed setter so Vue picks up the
 				// change without re-shaping the item proxy.
-				if (Number(it.rate) !== Number(row.rate)) {
-					this.setFormatedQty(it, "rate", null, false, row.rate);
-					this.setFormatedQty(it, "price_list_rate", null, false, row.rate);
+				// Sungas posa-0023: tier rate is per kg; a cylinder unit costs kg rate x size.
+				const unitRate = Math.round(Number(row.rate) * Number(it.conversion_factor || 1) * 100) / 100;
+				if (Number(it.rate) !== unitRate) {
+					this.setFormatedQty(it, "rate", null, false, unitRate);
+					this.setFormatedQty(it, "price_list_rate", null, false, unitRate);
 				}
-				const newAmount = Math.round(Number(row.rate) * Number(it.qty || 0) * 100) / 100;
+				const newAmount = Math.round(unitRate * Number(it.qty || 0) * 100) / 100;
 				// Sungas Phase-5: only auto-fill posa_amount_due when it's
 				// missing or BELOW the goods value. If the cashier typed a
 				// higher amount in the Total Amount field (a valid cash
@@ -4355,6 +4369,21 @@ export default {
 	// Sungas Phase-5: only flags TIERED items missing a tier. Non-tiered
 	// items (cylinders, regulators, cookers, accessories) sit in
 	// _lpgNonTieredByCode and don't block PAY.
+	// Sungas posa-0023: cylinder lines are whole cylinders; kg lines must say which cylinder they go into.
+	lpgCylinderProblems() {
+		const out = [];
+		(this.items || []).forEach((it) => {
+			const hasCyl = (it.item_uoms || []).some((u) => String(u.uom || "").endsWith(" Cyl"));
+			if (!hasCyl) return;
+			const cf = Number(it.conversion_factor || 1);
+			if (cf !== 1 && !Number.isInteger(Number(it.qty))) {
+				out.push(__("{0}: enter a whole number of {1} cylinders.", [it.item_name, it.uom]));
+			} else if (cf === 1 && !it.sungas_fill_into) {
+				out.push(__("{0} ({1} kg): pick which cylinder it is going into (Fill into).", [it.item_name, it.qty]));
+			}
+		});
+		return out;
+	},
 	lpgRowsMissingTier() {
 		const items = this.items || [];
 		if (!items.length) return [];

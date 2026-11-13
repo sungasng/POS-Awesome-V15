@@ -144,6 +144,20 @@
 											prepend-inner-icon="mdi-weight"
 										></v-select>
 									</div>
+									<div class="form-field" v-if="sungasFillOptions(item).length && Number(item.conversion_factor || 1) === 1">
+										<v-select
+											density="compact"
+											class="pos-themed-input"
+											:label="frappe._('Fill into (cylinder)')"
+											v-model="item.sungas_fill_into"
+											:items="sungasFillOptions(item)"
+											variant="outlined"
+											hide-details
+											data-testid="pos-fill-into-select"
+											:error="!item.sungas_fill_into"
+											prepend-inner-icon="mdi-gas-cylinder"
+										></v-select>
+									</div>
 								</div>
 							</div>
 
@@ -262,7 +276,8 @@
 											:disabled="
 												!!item.posa_is_replace ||
 												!!item.posa_offer_applied ||
-												!(item.rate > 0)
+												!(item.rate > 0) ||
+												Number(item.conversion_factor || 1) !== 1
 											"
 											prepend-inner-icon="mdi-calculator"
 										></v-text-field>
@@ -1238,6 +1253,11 @@ export default {
 		//   2. The backend `apply_cash_overage` hook can book the
 		//      `posa_amount_due - qty*rate` overage as a Rounding Adjustment
 		//      to the Round Off Expense account.
+		// Sungas posa-0023: "Fill into" choices = the item's cylinder units + unknown.
+		sungasFillOptions(item) {
+			const cyl = (item.item_uoms || []).map((u) => u.uom).filter((u) => String(u || "").endsWith(" Cyl"));
+			return cyl.length ? cyl.concat([__("Customer's own / unknown")]) : [];
+		},
 		handleAmountDueChange(item, event) {
 			const raw = (event && event.target && event.target.value) || "";
 			// Strip currency formatting (commas, spaces, ₦).
