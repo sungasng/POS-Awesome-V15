@@ -439,31 +439,41 @@ export default {
 		},
 		// Sungas posa-0021: the Commercial Desk decides group changes.
 		request_group_change() {
+			// posa-0022: capture before closing (closing clears customer_id), then open on top of the till.
 			const vm = this;
-			frappe.prompt(
-				[
-					{ fieldname: "requested_group", label: __("Move to group"), fieldtype: "Select", reqd: 1,
-					  options: vm.groups.filter((g) => g !== vm.group).join("\n") },
-					{ fieldname: "business_type", label: __("Business type"), fieldtype: "Select",
-					  options: "\nRestaurant / Hotel\nIndustrial / Factory\nSchool / Hospital / Institution\nReseller / Retailer\nOther" },
-					{ fieldname: "expected_monthly_kg", label: __("Expected kg per month"), fieldtype: "Float" },
-					{ fieldname: "justification", label: __("Why should they move?"), fieldtype: "Small Text", reqd: 1 },
-				],
-				(v) =>
-					frappe
-						.call({
-							method: "sungas.commercial_desk.request_group_change",
-							args: { customer: vm.customer_id, requested_from: vm.pos_profile && vm.pos_profile.name, ...v },
-						})
-						.then((r) =>
-							vm.eventBus.emit("show_message", {
-								title: __("Request {0} sent to the Commercial Desk", [r.message]),
-								color: "success",
-							}),
-						),
-				__("Request group change"),
-				__("Send"),
-			);
+			const customer = vm.customer_id;
+			const current = vm.group;
+			const groups = vm.groups.filter((g) => g !== current);
+			const till = vm.pos_profile && vm.pos_profile.name;
+			if (!customer) return;
+			vm.close_dialog();
+			vm.$nextTick(() => {
+				const d = frappe.prompt(
+					[
+						{ fieldname: "requested_group", label: __("Move to group"), fieldtype: "Select", reqd: 1,
+						  options: groups.join("\n") },
+						{ fieldname: "business_type", label: __("Business type"), fieldtype: "Select",
+						  options: "\nRestaurant / Hotel\nIndustrial / Factory\nSchool / Hospital / Institution\nReseller / Retailer\nOther" },
+						{ fieldname: "expected_monthly_kg", label: __("Expected kg per month"), fieldtype: "Float" },
+						{ fieldname: "justification", label: __("Why should they move?"), fieldtype: "Small Text", reqd: 1 },
+					],
+					(v) =>
+						frappe
+							.call({
+								method: "sungas.commercial_desk.request_group_change",
+								args: { customer, requested_from: till, ...v },
+							})
+							.then((r) =>
+								vm.eventBus.emit("show_message", {
+									title: __("Request {0} sent to the Commercial Desk", [r.message]),
+									color: "success",
+								}),
+							),
+					__("Request group change for {0}", [customer]),
+					__("Send"),
+				);
+				d.$wrapper.css("z-index", 3000);
+			});
 		},
 		close_dialog() {
 			this.customerDialog = false;

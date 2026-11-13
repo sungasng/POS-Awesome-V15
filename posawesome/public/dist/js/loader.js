@@ -1,3 +1,3 @@
 // Dynamic import to load the ES module bundle
 // This allows code splitting while being loaded from a classic script tag
-import("/assets/posawesome/dist/js/posawesome.js?v=1794468934037");
+import("/assets/posawesome/dist/js/posawesome.js?v=1794561231562");
