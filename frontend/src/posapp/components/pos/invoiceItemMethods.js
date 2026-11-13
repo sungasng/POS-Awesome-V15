@@ -4328,10 +4328,20 @@ export default {
 				// change without re-shaping the item proxy.
 				// Sungas posa-0023: tier rate is per kg; a cylinder unit costs kg rate x size.
 				const unitRate = Math.round(Number(row.rate) * Number(it.conversion_factor || 1) * 100) / 100;
-				if (Number(it.rate) !== unitRate) {
-					this.setFormatedQty(it, "rate", null, false, unitRate);
-					this.setFormatedQty(it, "price_list_rate", null, false, unitRate);
+				if (Number(it.rate) !== unitRate || Number(it.base_rate) !== unitRate) {
+					// Sungas posa-0028: write price fields directly. setFormatedQty is the QTY helper: it set stock_qty
+					// from the price (1,655 kg reserved per line -> "LPG has only 0 in stock"), and calc_item_price then
+					// restored the old base_rate (Retail 1,700). Single currency (NGN), so base = selected.
+					const perKg = Math.round(Number(row.rate) * 100) / 100;
+					it.price_list_rate = unitRate;
+					it.rate = unitRate;
+					it.base_price_list_rate = unitRate;
+					it.base_rate = unitRate;
+					it.original_base_rate = perKg;
+					it.original_base_price_list_rate = perKg;
+					this.calc_item_price(it);
 				}
+				this.calc_stock_qty(it, it.qty);
 				const newAmount = Math.round(unitRate * Number(it.qty || 0) * 100) / 100;
 				// Sungas Phase-5: only auto-fill posa_amount_due when it's
 				// missing or BELOW the goods value. If the cashier typed a
