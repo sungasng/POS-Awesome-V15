@@ -1107,7 +1107,12 @@ export default {
 				// Debounced resize handler for better performance
 				const debouncedResizeHandler = _.debounce((entries) => {
 					for (let entry of entries) {
-						const { width, height } = entry.contentRect;
+						const { height } = entry.contentRect;
+						// Sungas posa-0026: width incl. scrollbar + ignore small changes, so a scrollbar
+						// appearing near a column breakpoint (e.g. 700px) can't flip the layout back and forth.
+						const measured = entry.target.getBoundingClientRect().width;
+						const width =
+							Math.abs(measured - this.containerWidth) < 24 ? this.containerWidth : measured;
 
 						// Only update if dimensions actually changed
 						if (this.containerWidth !== width || this.containerHeight !== height) {

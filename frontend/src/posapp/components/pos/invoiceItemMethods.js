@@ -1331,7 +1331,8 @@ export default {
 		if (!code || !warehouse) {
 			return null;
 		}
-		return `${code}::${warehouse}`;
+		// Sungas posa-0026: details (rate, UOM factor) depend on the customer and the unit too.
+		return `${code}::${warehouse}::${item?.uom || ""}::${this.customer || ""}`;
 	},
 	_getCachedItemDetail(key) {
 		if (!key) {
