@@ -4229,7 +4229,7 @@ export default {
 				const resolvedPriceList = message.customer_price_list || defaultPriceList;
 				vm.selected_price_list = resolvedPriceList;
 				vm.eventBus.emit("update_customer_price_list", resolvedPriceList);
-				vm.apply_cached_price_list(resolvedPriceList);
+				await vm.apply_cached_price_list(resolvedPriceList);
 			}
 		} catch (error) {
 			console.error("Failed to fetch customer details", error);
@@ -4719,6 +4719,15 @@ export default {
 
 		if (typeof this.$forceUpdate === "function") {
 			this.$forceUpdate();
+		}
+		// Sungas posa-0027: price-list rates (often a cached Retail rate) must never be the last word;
+		// re-apply the customer's tier so 1,480 isn't overwritten by 1,700 (x50 = 85,000 per cylinder).
+		if (this.customer && Array.isArray(this.items) && this.items.length) {
+			try {
+				await this.apply_tier_pricing_to_cart();
+			} catch (error) {
+				console.error("apply_tier_pricing_to_cart failed", error);
+			}
 		}
 	},
 	// Update additional discount amount based on percentage

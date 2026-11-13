@@ -1591,6 +1591,18 @@ export default {
 
 				vm.$nextTick(async () => {
 					updates.forEach(({ item, upd }) => Object.assign(item, upd));
+					// Sungas posa-0027: the tile's "available" comes from the stock coordinator, not item.actual_qty.
+					const baseEntries = [];
+					updates.forEach(({ item, upd }) => {
+						vm.captureBaseAvailability(item, upd.actual_qty);
+						if (upd.actual_qty !== undefined && upd.actual_qty !== null) {
+							baseEntries.push({ item_code: item.item_code, actual_qty: upd.actual_qty });
+						}
+					});
+					if (baseEntries.length) {
+						stockCoordinator.updateBaseQuantities(baseEntries, { source: "items-selector" });
+						vm.recomputeAvailabilityForCodes(baseEntries.map((e) => e.item_code));
+					}
 					updateLocalStockCache(details);
 					saveItemDetailsCache(vm.pos_profile.name, vm.sungas_details_cache_key, details);
 					if (
@@ -2330,6 +2342,8 @@ export default {
 				if (vm.storageAvailable) {
 					await vm.loadVisibleItems(true);
 					vm.enter_event();
+					// Sungas posa-0027: stored tiles carry the price/stock from when they were saved; refresh for this customer.
+					vm.refreshPricesForVisibleItems({ forceRefresh: true });
 				} else {
 					vm.get_items(true);
 				}
