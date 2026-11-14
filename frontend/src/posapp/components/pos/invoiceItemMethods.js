@@ -2918,6 +2918,12 @@ export default {
 			return true;
 		}
 
+		// Sungas posa-0040: two cart lines of the same item (LPG kg + cylinders) must never swap
+		// uom / rate / amount -- when both sides carry a line id and it differs, it is a different line.
+		if ((posa_row_id && item.posa_row_id) || (name && item.name)) {
+			return false;
+		}
+
 		const coerce = (value) => value === true || value === 1 || value === "1";
 
 		if (is_free_item !== undefined && is_free_item !== null) {
