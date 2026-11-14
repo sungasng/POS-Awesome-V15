@@ -29,7 +29,19 @@
 
 			<v-card-text class="pa-0 white-background">
 				<v-container class="pa-6">
-					<v-row class="mb-6">
+					<!-- Sungas posa-0037: blind count -- expected amounts and shift totals show only after the count -->
+					<v-alert
+						v-if="countStage === 'count'"
+						type="info"
+						variant="tonal"
+						class="mb-4"
+						data-testid="blind-count-banner"
+					>
+						{{ recounted
+							? __("Recount: count the cash again and re-enter every amount. Your first count is kept.")
+							: __("Count the cash in the drawer and add up the POS slips and transfers. Enter what you counted for each payment type, then press Submit count. The expected amounts appear after that.") }}
+					</v-alert>
+					<v-row class="mb-6" v-if="countStage === 'review'">
 						<v-col cols="12" class="pa-1">
 							<div class="table-header mb-4">
 								<h4 class="text-h6 text-grey-darken-2 mb-1">
@@ -779,7 +791,7 @@
 							</div>
 
 							<v-data-table
-								:headers="headers"
+								:headers="countStage === 'count' ? baseHeaders : headers"
 								:items="dialog_data.payment_reconciliation"
 								item-key="mode_of_payment"
 								class="elevation-0 rounded-lg white-table"
@@ -790,6 +802,8 @@
 								<template v-slot:item.closing_amount="props">
 									<v-text-field
 										v-model="props.item.closing_amount"
+										:readonly="countStage === 'review'"
+										:data-testid="`closing-count-${props.item.mode_of_payment}`"
 										:rules="[closingAmountRule]"
 										:label="frappe._('Edit')"
 										single-line
@@ -823,7 +837,7 @@
 							</v-data-table>
 						</v-col>
 					</v-row>
-					<v-row class="mt-2">
+					<v-row class="mt-2" v-if="countStage === 'review'">
 						<v-col cols="12" class="pa-1">
 							<v-alert
 								v-if="hasVariance"
@@ -859,6 +873,18 @@
 								:hint="__('Required when cash variance is non-zero. Will be reviewed by Accounts.')"
 								persistent-hint
 							></v-textarea>
+							<v-text-field
+								v-if="recounted && varianceSeverity === 'block'"
+								v-model="countWitness"
+								class="mt-3"
+								variant="outlined"
+								density="comfortable"
+								data-testid="recount-witness-input"
+								:label="__('Recount witnessed by (Plant Manager name) - required')"
+							></v-text-field>
+							<div v-if="recounted" class="text-caption mt-2" data-testid="first-count-note">
+								{{ __("First count kept for review:") }} {{ firstCountText }}
+							</div>
 						</v-col>
 					</v-row>
 				</v-container>
@@ -878,15 +904,42 @@
 					<span>{{ __("Close") }}</span>
 				</v-btn>
 				<v-btn
+					v-if="countStage === 'count'"
 					theme="dark"
-					@click="submit_dialog"
+					@click="submit_count"
 					class="pos-action-btn submit-action-btn"
 					size="large"
 					elevation="2"
+					data-testid="submit-count-btn"
 				>
-					<v-icon start>mdi-check-circle-outline</v-icon>
-					<span>{{ __("Submit") }}</span>
+					<v-icon start>mdi-calculator-variant-outline</v-icon>
+					<span>{{ __("Submit count") }}</span>
 				</v-btn>
+				<template v-else>
+					<v-btn
+						v-if="!recounted && varianceSeverity !== 'none'"
+						theme="dark"
+						@click="recount"
+						class="pos-action-btn cancel-action-btn"
+						size="large"
+						elevation="2"
+						data-testid="recount-btn"
+					>
+						<v-icon start>mdi-restore</v-icon>
+						<span>{{ __("Recount once") }}</span>
+					</v-btn>
+					<v-btn
+						theme="dark"
+						@click="submit_dialog"
+						class="pos-action-btn submit-action-btn"
+						size="large"
+						elevation="2"
+						data-testid="submit-closing-btn"
+					>
+						<v-icon start>mdi-check-circle-outline</v-icon>
+						<span>{{ __("Submit") }}</span>
+					</v-btn>
+				</template>
 			</v-card-actions>
 		</v-card>
 	</v-dialog>
@@ -898,6 +951,10 @@ export default {
 	mixins: [format],
 	data: () => ({
 		closingDialog: false,
+		countStage: "count",
+		recounted: false,
+		firstCount: null,
+		countWitness: "",
 		itemsPerPage: 20,
 		dialog_data: {},
 		pos_profile: "",
@@ -972,50 +1029,6 @@ export default {
 	}),
 	watch: {},
 
-	computed: {
-		varianceThresholds() {
-			// Defaults match Sungas Close Policy (warn 5k/0.5%, block 50k/2%).
-			// Cashier sees the textarea on ANY non-zero variance to encourage attestation;
-			// backend enforces real thresholds.
-			return {
-				warnAbs: 5000,
-				warnPct: 0.5,
-				blockAbs: 50000,
-				blockPct: 2,
-			};
-		},
-		totalExpected() {
-			const rows = this.dialog_data?.payment_reconciliation || [];
-			return rows.reduce((s, r) => s + (Number(r?.expected_amount) || 0), 0);
-		},
-		totalVariance() {
-			const rows = this.dialog_data?.payment_reconciliation || [];
-			return rows.reduce((s, r) => {
-				const closing = Number(r?.closing_amount) || 0;
-				const expected = Number(r?.expected_amount) || 0;
-				return s + (closing - expected);
-			}, 0);
-		},
-		absVariance() {
-			return Math.abs(this.totalVariance);
-		},
-		variancePct() {
-			return this.totalExpected > 0 ? (this.absVariance / this.totalExpected) * 100 : 0;
-		},
-		hasVariance() {
-			return this.absVariance >= 0.01;
-		},
-		varianceSeverity() {
-			const t = this.varianceThresholds;
-			if (this.absVariance >= t.blockAbs || this.variancePct >= t.blockPct) {
-				return "block";
-			}
-			if (this.absVariance >= t.warnAbs || this.variancePct >= t.warnPct) {
-				return "warn";
-			}
-			return "none";
-		},
-	},
 
 	methods: {
 		handleKeydown(event) {
@@ -1028,7 +1041,31 @@ export default {
 			this.overview = null;
 			this.overviewLoading = false;
 		},
+		submit_count() {
+			const rows = this.dialog_data.payment_reconciliation || [];
+			const blank = rows.some((r) => r.closing_amount === "" || r.closing_amount === null ||
+				r.closing_amount === undefined || isNaN(parseFloat(r.closing_amount)));
+			if (blank) {
+				alert(this.__("Enter the counted amount for every payment type (0 if none)."));
+				return;
+			}
+			if (!this.firstCount) {
+				this.firstCount = rows.map((r) => ({ mode_of_payment: r.mode_of_payment, closing_amount: Number(r.closing_amount) }));
+			}
+			this.countStage = "review";
+		},
+		recount() {
+			this.recounted = true;
+			this.countStage = "count";
+		},
 		submit_dialog() {
+			if (this.recounted && this.varianceSeverity === "block" && !(this.countWitness || "").trim()) {
+				alert(this.__("The difference is still large after the recount. Type the name of the Plant Manager who witnessed it."));
+				return;
+			}
+			this.dialog_data.sungas_recounted = this.recounted ? 1 : 0;
+			this.dialog_data.sungas_first_count = this.recounted ? this.firstCountText : "";
+			this.dialog_data.sungas_count_witness = (this.countWitness || "").trim();
 			const invalid = (this.dialog_data.payments || []).some((p) =>
 				isNaN(parseFloat(p.closing_amount)),
 			);
@@ -1333,6 +1370,52 @@ export default {
 	},
 
 	computed: {
+		// Sungas posa-0037: merged -- a second computed block silently dropped these (variance banner never showed).
+		varianceThresholds() {
+			// Defaults match Sungas Close Policy (warn 5k/0.5%, block 50k/2%).
+			// Cashier sees the textarea on ANY non-zero variance to encourage attestation;
+			// backend enforces real thresholds.
+			return {
+				warnAbs: 5000,
+				warnPct: 0.5,
+				blockAbs: 50000,
+				blockPct: 2,
+			};
+		},
+		totalExpected() {
+			const rows = this.dialog_data?.payment_reconciliation || [];
+			return rows.reduce((s, r) => s + (Number(r?.expected_amount) || 0), 0);
+		},
+		totalVariance() {
+			const rows = this.dialog_data?.payment_reconciliation || [];
+			return rows.reduce((s, r) => {
+				const closing = Number(r?.closing_amount) || 0;
+				const expected = Number(r?.expected_amount) || 0;
+				return s + (closing - expected);
+			}, 0);
+		},
+		absVariance() {
+			return Math.abs(this.totalVariance);
+		},
+		variancePct() {
+			return this.totalExpected > 0 ? (this.absVariance / this.totalExpected) * 100 : 0;
+		},
+		firstCountText() {
+			return (this.firstCount || []).map((r) => `${r.mode_of_payment}: ${this.formatCurrency(r.closing_amount)}`).join(", ");
+		},
+		hasVariance() {
+			return this.absVariance >= 0.01;
+		},
+		varianceSeverity() {
+			const t = this.varianceThresholds;
+			if (this.absVariance >= t.blockAbs || this.variancePct >= t.blockPct) {
+				return "block";
+			}
+			if (this.absVariance >= t.warnAbs || this.variancePct >= t.warnPct) {
+				return "warn";
+			}
+			return "none";
+		},
 		companyCurrencySymbol() {
 			const currency =
 				this.overviewCompanyCurrency ||
@@ -1634,6 +1717,14 @@ export default {
 			if (data && data.variance_remarks === undefined) {
 				data.variance_remarks = "";
 			}
+			// Sungas posa-0037: blind count -- start empty, nothing expected on screen.
+			(data?.payment_reconciliation || []).forEach((r) => {
+				r.closing_amount = "";
+			});
+			this.countStage = "count";
+			this.recounted = false;
+			this.firstCount = null;
+			this.countWitness = "";
 			this.dialog_data = data;
 			this.fetchOverview(data.pos_opening_shift);
 		});
