@@ -818,8 +818,7 @@
 									></v-text-field>
 								</template>
 								<template v-slot:item.difference="{ item }">
-									{{ companyCurrencySymbol }}
-									{{ formatCurrency(calculateDifference(item)) }}
+									<span :data-testid="`closing-diff-${item.mode_of_payment}`">{{ differenceLabel(item) }}</span>
 								</template>
 								<template v-slot:item.opening_amount="{ item }">
 									{{ companyCurrencySymbol }}
@@ -848,9 +847,13 @@
 								data-testid="variance-banner"
 							>
 								<div class="text-subtitle-2">
-									{{ __("Variance Detected") }}: {{ formatCurrency(totalVariance) }}
+									{{ __("Difference") }}:
+									<span v-if="shortTotal" data-testid="variance-short-total">{{ __("Short") }} {{ companyCurrencySymbol }}{{ formatCurrency(shortTotal) }}</span>
+									<span v-if="shortTotal && overTotal"> · </span>
+									<span v-if="overTotal" data-testid="variance-over-total">{{ __("Over") }} {{ companyCurrencySymbol }}{{ formatCurrency(overTotal) }}</span>
+									- {{ __("total") }} {{ companyCurrencySymbol }}{{ formatCurrency(absVariance) }}
 									<span v-if="totalExpected > 0">
-										({{ formatFloat((totalVariance / totalExpected) * 100, 2) }}%)
+										({{ formatFloat(variancePct, 2) }}%)
 									</span>
 								</div>
 								<div class="text-caption mt-1">
@@ -1032,8 +1035,10 @@ export default {
 
 	methods: {
 		handleKeydown(event) {
+			// Sungas posa-0039: Esc no longer closes the count screen.
 			if (event.key === "Escape" && this.closingDialog) {
-				this.close_dialog();
+				event.preventDefault();
+				event.stopPropagation();
 			}
 		},
 		close_dialog() {
@@ -1049,10 +1054,46 @@ export default {
 				alert(this.__("Enter the counted amount for every payment type (0 if none)."));
 				return;
 			}
+			const counts = rows.map((r) => ({ mode_of_payment: r.mode_of_payment, closing_amount: Number(r.closing_amount) }));
 			if (!this.firstCount) {
-				this.firstCount = rows.map((r) => ({ mode_of_payment: r.mode_of_payment, closing_amount: Number(r.closing_amount) }));
+				this.firstCount = counts;
 			}
 			this.countStage = "review";
+			// Sungas posa-0039: every count is saved on the shift so closing the screen cannot wipe the first one.
+			frappe
+				.call("sungas.shift_controls.record_count", { opening_shift: this.openingShiftName(), counts })
+				.then((r) => {
+					if (r.message?.first?.length) {
+						this.firstCount = r.message.first;
+					}
+					if (r.message?.counts > 1) {
+						this.recounted = true;
+					}
+				})
+				.catch((e) => console.warn("Count not saved on server", e));
+		},
+		openingShiftName() {
+			const s = this.dialog_data?.pos_opening_shift;
+			return typeof s === "string" ? s : s?.name;
+		},
+		loadSavedCounts() {
+			const opening_shift = this.openingShiftName();
+			if (!opening_shift) return;
+			frappe
+				.call("sungas.shift_controls.get_counts", { opening_shift })
+				.then((r) => {
+					if (r.message?.counts > 0) {
+						this.recounted = true;
+						this.firstCount = r.message.first;
+					}
+				})
+				.catch((e) => console.warn("Saved counts not loaded", e));
+		},
+		differenceLabel(item) {
+			const d = this.calculateDifference(item);
+			const amt = `${this.companyCurrencySymbol} ${this.formatCurrency(Math.abs(d))}`;
+			if (Math.abs(d) < 0.01) return amt;
+			return d > 0 ? `${this.__("Short")} ${amt}` : `${this.__("Over")} ${amt}`;
 		},
 		recount() {
 			this.recounted = true;
@@ -1082,7 +1123,7 @@ export default {
 					this.__(
 						"Please enter Variance Remarks before submitting. Your shift has a variance of {0} ({1}%) and an explanation is required.",
 					)
-						.replace("{0}", this.formatCurrency(this.totalVariance))
+						.replace("{0}", this.formatCurrency(this.absVariance))
 						.replace("{1}", this.formatFloat(this.variancePct, 2)),
 				);
 				return;
@@ -1353,8 +1394,7 @@ export default {
 				return closing ? this.__("N/A") : "0%";
 			}
 			const variance = (this.calculateDifference(item) / expected) * 100;
-			const prefix = variance > 0 ? "+" : variance < 0 ? "" : "";
-			return `${prefix}${this.formatFloat(variance, 2)}%`;
+			return `${this.formatFloat(Math.abs(variance), 2)}%`;
 		},
 		varianceClass(item) {
 			const expected = Number(item?.expected_amount) || 0;
@@ -1365,7 +1405,7 @@ export default {
 			if (!variance) {
 				return "variance-neutral";
 			}
-			return variance > 0 ? "variance-negative" : "variance-positive";
+			return variance > 0 ? "variance-negative" : "variance-over";
 		},
 	},
 
@@ -1386,16 +1426,17 @@ export default {
 			const rows = this.dialog_data?.payment_reconciliation || [];
 			return rows.reduce((s, r) => s + (Number(r?.expected_amount) || 0), 0);
 		},
-		totalVariance() {
+		// Sungas posa-0039: shortages and overages are added up separately -- one never cancels the other.
+		shortTotal() {
 			const rows = this.dialog_data?.payment_reconciliation || [];
-			return rows.reduce((s, r) => {
-				const closing = Number(r?.closing_amount) || 0;
-				const expected = Number(r?.expected_amount) || 0;
-				return s + (closing - expected);
-			}, 0);
+			return rows.reduce((s, r) => s + Math.max(this.calculateDifference(r), 0), 0);
+		},
+		overTotal() {
+			const rows = this.dialog_data?.payment_reconciliation || [];
+			return rows.reduce((s, r) => s + Math.max(-this.calculateDifference(r), 0), 0);
 		},
 		absVariance() {
-			return Math.abs(this.totalVariance);
+			return this.shortTotal + this.overTotal;
 		},
 		variancePct() {
 			return this.totalExpected > 0 ? (this.absVariance / this.totalExpected) * 100 : 0;
@@ -1726,6 +1767,7 @@ export default {
 			this.firstCount = null;
 			this.countWitness = "";
 			this.dialog_data = data;
+			this.loadSavedCounts();
 			this.fetchOverview(data.pos_opening_shift);
 		});
 		this.eventBus.on("register_pos_profile", (data) => {
@@ -2022,6 +2064,11 @@ export default {
 .variance-negative {
 	background: rgba(211, 47, 47, 0.12);
 	color: #b71c1c;
+}
+
+.variance-over {
+	background: rgba(245, 124, 0, 0.14);
+	color: #e65100;
 }
 
 .variance-neutral {
