@@ -952,6 +952,14 @@ export default {
 			if (!this.usesLimitSearch && new_value.length !== old_value.length) {
 				this.update_items_details(new_value);
 			}
+			// Sungas posa-0029: the list is filtered in place from items loaded for an earlier customer
+			// (e.g. walk-in Retail 1,700); re-price whatever is now on screen for the selected customer.
+			const codes = (new_value || []).map((it) => it.item_code).join("|");
+			if (this.customer && codes && codes !== this._sungasVisibleCodes) {
+				this._sungasVisibleCodes = codes;
+				clearTimeout(this._sungasVisibleTimer);
+				this._sungasVisibleTimer = setTimeout(() => this.refreshPricesForVisibleItems({ forceRefresh: true }), 350);
+			}
 			this.$nextTick(() => {
 				this.checkItemContainerOverflow();
 				this.scheduleCardMetricsUpdate();
@@ -2342,8 +2350,6 @@ export default {
 				if (vm.storageAvailable) {
 					await vm.loadVisibleItems(true);
 					vm.enter_event();
-					// Sungas posa-0027: stored tiles carry the price/stock from when they were saved; refresh for this customer.
-					vm.refreshPricesForVisibleItems({ forceRefresh: true });
 				} else {
 					vm.get_items(true);
 				}

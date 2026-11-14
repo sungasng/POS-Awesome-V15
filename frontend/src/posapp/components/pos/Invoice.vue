@@ -518,7 +518,7 @@ export default {
 			this.available_columns = [
 				{ title: __("Name"), align: "start", sortable: true, key: "item_name", required: true },
 				{ title: __("QTY"), key: "qty", align: "center", required: true },
-				{ title: __("UOM"), key: "uom", align: "center", required: false },
+				{ title: __("UOM"), key: "uom", align: "center", required: true }, // Sungas posa-0029: cylinder size always visible
 				{
 					title: __("Price List Rate"),
 					key: "price_list_rate",

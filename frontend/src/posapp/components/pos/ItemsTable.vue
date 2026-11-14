@@ -739,6 +739,7 @@ export default {
 						header.required ||
 						header.key === "item_name" ||
 						header.key === "qty" ||
+						header.key === "uom" || // Sungas posa-0029: cylinder size stays visible on narrow tills
 						header.key === "actions"
 					) {
 						return true;
