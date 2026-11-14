@@ -27,6 +27,42 @@ from frappe.utils import flt
 TOLERANCE = 0.01
 
 
+CASH_STEP = 100
+
+
+def cash_rounding(doc, line_overage=0.0) -> float:
+    """Sungas posa-0031: no change is given for cash, so the cash part is rounded UP to the next N100.
+
+    Only the cash part rounds (transfer / card pay exact). The surplus (< N100) is kept as rounding
+    income; anything beyond it is real change and is left alone.
+    """
+    payments = getattr(doc, "payments", None) or []
+    if getattr(doc, "is_return", 0) or not payments:
+        return 0.0
+    cash_paid = non_cash = 0.0
+    for p in payments:
+        amt = flt(getattr(p, "amount", 0) or 0)
+        if not amt:
+            continue
+        mtype = getattr(p, "type", None) or frappe.db.get_value("Mode of Payment", p.mode_of_payment, "type")
+        if mtype == "Cash":
+            cash_paid += amt
+        else:
+            non_cash += amt
+    if cash_paid <= TOLERANCE:
+        return 0.0
+    due = flt(getattr(doc, "grand_total", 0) or 0) + flt(line_overage)
+    cash_needed = flt(max(0.0, due - non_cash), 2)
+    if cash_needed <= TOLERANCE:
+        return 0.0
+    steps = -(-cash_needed // CASH_STEP)
+    rounded_cash = flt(steps * CASH_STEP, 2)
+    surplus = flt(cash_paid - cash_needed, 2)
+    if surplus <= TOLERANCE:
+        return 0.0
+    return flt(min(surplus, rounded_cash - cash_needed), 2)
+
+
 def apply_cash_overage(doc, method=None):
     """
     Compute total cash overage across all rows and book it as a Rounding
@@ -49,7 +85,7 @@ def apply_cash_overage(doc, method=None):
         if diff > TOLERANCE:
             total_overage += diff
 
-    total_overage = flt(total_overage, 2)
+    total_overage = flt(total_overage + cash_rounding(doc, total_overage), 2)
 
     # Always reset to a clean state on re-validate so a previous overage
     # doesn't leak into a different scenario (e.g. cashier edits qty after

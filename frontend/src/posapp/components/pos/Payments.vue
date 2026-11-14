@@ -2060,15 +2060,16 @@ export default {
     	console.log("Clicked button text:", clickedButton);
     
     	// Determine total amount based on payment type
-    	// Only round UP to nearest 50 for Cash payments
+    	// Sungas posa-0031: Cash rounds UP to the next N100
     	let totalAmount;
-    	const isCashPayment = clickedButton && clickedButton.toLowerCase().includes('cash');
-    	
-    	if (isCashPayment) {
-        	// Round UP to nearest 50 for Cash
-        	const grandTotal = this.invoice_doc.grand_total || 0;
-        	const remainder = grandTotal % 50;
-        	totalAmount = remainder === 0 ? grandTotal : grandTotal + (50 - remainder);
+		const clickedMode = this.invoice_doc.payments.find((p) => p.mode_of_payment === clickedButton);
+		const isCashPayment =
+			(clickedMode && clickedMode.type === "Cash") ||
+			(clickedButton && clickedButton.toLowerCase().includes("cash"));
+		if (isCashPayment && !isReturn) {
+			// Sungas posa-0031: no change for cash -> round UP to the next N100 (kept as rounding income).
+			const grandTotal = this.invoice_doc.grand_total || 0;
+			totalAmount = this.sungasRoundCash(grandTotal);
        		 // Update rounded_total for display
         	this.invoice_doc.rounded_total = totalAmount;
         	this.invoice_doc.rounding_adjustment = totalAmount - grandTotal;
@@ -2118,6 +2119,15 @@ export default {
 			this.invoice_doc.payments.forEach((payment) => {
 				if (payment.idx === idx && payment.amount === 0 && this.diff_payment > 0) {
 					let amount = this.diff_payment;
+					// Sungas posa-0031: only the cash part rounds UP to the next N100.
+					if (payment.type === "Cash" && !isReturn) {
+						amount = this.sungasRoundCash(amount);
+						const extra = Math.round((amount - this.diff_payment) * 100) / 100;
+						if (extra > 0) {
+							this.invoice_doc.rounding_adjustment = Math.round(((this.invoice_doc.rounding_adjustment || 0) + extra) * 100) / 100;
+							this.invoice_doc.rounded_total = Math.round(((this.invoice_doc.rounded_total || this.invoice_doc.grand_total) + extra) * 100) / 100;
+						}
+					}
 					if (isReturn) {
 						amount = -Math.abs(amount);
 					}
@@ -2127,6 +2137,10 @@ export default {
 					}
 				}
 			});
+		},
+		sungasRoundCash(value) {
+			const v = Math.round(Number(value || 0) * 100) / 100;
+			return v <= 0 ? v : Math.ceil(v / 100) * 100;
 		},
 		// Clear all payment amounts
 		clear_all_amounts() {
