@@ -1690,30 +1690,10 @@ export default {
 					frappe.utils.play_sound("error");
 					return;
 				}
-				// Validate cash payments when credit sale is off
-				if (!this.is_credit_sale && !this.invoice_doc.is_return) {
-					let has_cash_payment = false;
-					let cash_amount = 0;
-					this.invoice_doc.payments.forEach((payment) => {
-						if (payment.mode_of_payment.toLowerCase().includes("cash")) {
-							has_cash_payment = true;
-							cash_amount = this.flt(payment.amount);
-						}
-					});
-					if (has_cash_payment && cash_amount > 0) {
-						if (
-							!this.pos_profile.posa_allow_partial_payment &&
-							cash_amount < (this.invoice_doc.rounded_total || this.invoice_doc.grand_total) &&
-							(this.invoice_doc.rounded_total || this.invoice_doc.grand_total) > 0
-						) {
-							this.eventBus.emit("show_message", {
-								title: `Cash payment cannot be less than invoice total when partial payment is not allowed`,
-								color: "error",
-							});
-							frappe.utils.play_sound("error");
-							return;
-						}
-					}
+				// Sungas posa-0034: split payments are fine -- the old "cash alone must cover the total" check
+				// blocked cash + POS + transfer. Cash part is rounded UP to the next N100 (no coins change).
+				if (!this.invoice_doc.is_return) {
+					this.sungasRoundCashPart();
 				}
 				// Validate partial payments only if not credit sale and invoice total is not zero
 				if (
@@ -2159,6 +2139,32 @@ export default {
 					}
 				}
 			});
+		},
+		sungasRoundCashPart() {
+			const pays = this.invoice_doc.payments || [];
+			const cash = pays.filter((p) => this.isCashLikePayment(p) && this.flt(p.amount) > 0);
+			if (cash.length !== 1) return;
+			const nonCash = pays.filter((p) => !cash.includes(p)).reduce((t, p) => t + this.flt(p.amount), 0);
+			const grand = this.flt(this.invoice_doc.grand_total);
+			const needed = Math.round(Math.max(0, grand - nonCash) * 100) / 100;
+			if (needed <= 0) return;
+			const required = this.sungasRoundCash(needed);
+			const p = cash[0];
+			if (this.flt(p.amount) < required && this.flt(p.amount) > needed - 100) {
+				p.amount = required;
+				if (p.base_amount !== undefined) {
+					p.base_amount = this.flt(required * (this.invoice_doc.conversion_rate || 1), this.currency_precision);
+				}
+				this.eventBus.emit("show_message", {
+					title: __("Cash rounded up to {0} (next N100, no change)", [this.formatCurrency(required)]),
+					color: "info",
+				});
+			}
+			if (this.flt(p.amount) >= required) {
+				const adj = Math.round((required - needed) * 100) / 100;
+				this.invoice_doc.rounding_adjustment = adj;
+				this.invoice_doc.rounded_total = Math.round((grand + adj) * 100) / 100;
+			}
 		},
 		sungasRoundCash(value) {
 			const v = Math.round(Number(value || 0) * 100) / 100;
@@ -2884,6 +2890,12 @@ export default {
 
 			if (amount_to_pay <= 0) return [];
 
+			// Sungas posa-0034: cash suggestions start at the next N100 (cash part never needs coins).
+			if (this.isCashLikePayment(payment) && !this.invoice_doc.is_return) {
+				const req = this.sungasRoundCash(amount_to_pay - (this.flt(this.invoice_doc.rounding_adjustment) || 0));
+				const more = getSmartTenderSuggestions(req, currency).filter((x) => x > req && x % 100 === 0);
+				return [req, ...new Set(more)];
+			}
 			return getSmartTenderSuggestions(amount_to_pay, currency);
 		},
 		isCashLikePayment(payment) {
