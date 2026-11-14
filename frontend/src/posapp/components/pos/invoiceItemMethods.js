@@ -3233,9 +3233,13 @@ export default {
 				await this.apply_tier_pricing_to_cart();
 				const cylErr = this.lpgCylinderProblems();
 				if (cylErr.length) {
+					// Sungas posa-0033: open the line that needs "Fill into" and say why (detail was hidden).
+					if (this._cylProblemRowId) this.expanded = [this._cylProblemRowId];
 					this.eventBus.emit("show_message", {
 						title: __("Cylinder details needed"),
+						summary: __("Cylinder details needed"),
 						detail: cylErr.join(" "),
+						timeout: 10000,
 						color: "error",
 						groupId: "pay-cylinder",
 					});
@@ -3245,6 +3249,7 @@ export default {
 				if (missing.length) {
 					this.eventBus.emit("show_message", {
 						title: __("No tier rate"),
+						summary: __("No tier rate"),
 						detail: __(
 							"Items {0} have no LPG Outlet Price Tier configured for {1}. Cannot PAY.",
 							[missing.join(", "), this.customer],
@@ -4387,15 +4392,18 @@ export default {
 	// Sungas posa-0023: cylinder lines are whole cylinders; kg lines must say which cylinder they go into.
 	lpgCylinderProblems() {
 		const out = [];
+		this._cylProblemRowId = null;
 		(this.items || []).forEach((it) => {
 			const hasCyl = (it.item_uoms || []).some((u) => String(u.uom || "").endsWith(" Cyl"));
 			if (!hasCyl) return;
 			const cf = Number(it.conversion_factor || 1);
+			const before = out.length;
 			if (cf !== 1 && !Number.isInteger(Number(it.qty))) {
 				out.push(__("{0}: enter a whole number of {1} cylinders.", [it.item_name, it.uom]));
 			} else if (cf === 1 && !it.sungas_fill_into) {
-				out.push(__("{0} ({1} kg): pick which cylinder it is going into (Fill into).", [it.item_name, it.qty]));
+				out.push(__("{0} ({1} kg): in the opened line pick 'Fill into (cylinder)'.", [it.item_name, it.qty]));
 			}
+			if (out.length > before && !this._cylProblemRowId) this._cylProblemRowId = it.posa_row_id;
 		});
 		return out;
 	},
