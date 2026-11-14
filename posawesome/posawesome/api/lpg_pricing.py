@@ -271,11 +271,14 @@ def apply_tiered_pricing(doc, method=None):
                 missing.append((row.item_code, "no customer / customer_group"))
                 continue
 
+            # Sungas posa-0030: tiers are per stock unit (kg). A "50kg Cyl" line is priced
+            # 50 x the kg rate and its quantity band is judged in kg (qty x size).
+            cf = flt(getattr(row, "conversion_factor", 0) or 0) or 1
             tier = find_applicable_tier(
                 item_code=row.item_code,
                 customer_group=customer_group,
                 territory=outlet_territory,
-                qty=flt(getattr(row, "qty", 0) or 0),
+                qty=flt(getattr(row, "qty", 0) or 0) * cf,
                 posting_date=posting_date,
             )
             if not tier:
@@ -290,6 +293,7 @@ def apply_tiered_pricing(doc, method=None):
             if tier_rate <= 0:
                 missing.append((row.item_code, f"tier {tier['name']} has rate=0"))
                 continue
+            tier_rate = flt(tier_rate * cf, 2)
 
             if flt(getattr(row, "rate", 0)) != tier_rate:
                 row.price_list_rate = tier_rate

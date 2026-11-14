@@ -67,8 +67,12 @@ def sync_kg_fields(doc, method=None):
         amount_due = flt(getattr(row, "posa_amount_due", 0) or 0)
         computed = flt(qty * rate, AMOUNT_PRECISION)
 
+        # Sungas posa-0030: whole-cylinder lines (e.g. "50kg Cyl") are sold by count; never turn
+        # their amount back into a quantity.
+        cf = flt(getattr(row, "conversion_factor", 0) or 0) or 1
         amount_edited = (
-            amount_due > 0
+            cf == 1
+            and amount_due > 0
             and rate > 0
             and abs(amount_due - computed) > AMOUNT_TOLERANCE
         )
@@ -95,9 +99,9 @@ def sync_kg_fields(doc, method=None):
 
         # Legacy display mirrors (stock_uom is Kg → kg_qty == qty, rate_per_kg == rate).
         if hasattr(row, "posa_kg_qty"):
-            row.posa_kg_qty = flt(qty, QTY_PRECISION)
+            row.posa_kg_qty = flt(qty * cf, QTY_PRECISION)
         if hasattr(row, "posa_rate_per_kg"):
-            row.posa_rate_per_kg = flt(rate, AMOUNT_PRECISION)
+            row.posa_rate_per_kg = flt(rate / cf, AMOUNT_PRECISION)
 
     if any_qty_changed and hasattr(doc, "calculate_taxes_and_totals"):
         doc.calculate_taxes_and_totals()
