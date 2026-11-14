@@ -2065,9 +2065,8 @@ export default {
     	// Sungas posa-0031: Cash rounds UP to the next N100
     	let totalAmount;
 		const clickedMode = this.invoice_doc.payments.find((p) => p.mode_of_payment === clickedButton);
-		const isCashPayment =
-			(clickedMode && clickedMode.type === "Cash") ||
-			(clickedButton && clickedButton.toLowerCase().includes("cash"));
+		// Sungas posa-0035: by name -- every row arrives typed "Cash" (POS / Transfer too).
+		const isCashPayment = this.isCashLikePayment(clickedMode || { mode_of_payment: clickedButton });
 		if (isCashPayment && !isReturn) {
 			// Sungas posa-0031: no change for cash -> round UP to the next N100 (kept as rounding income).
 			const grandTotal = this.invoice_doc.grand_total || 0;
@@ -2122,7 +2121,7 @@ export default {
 				if (payment.idx === idx && payment.amount === 0 && this.diff_payment > 0) {
 					let amount = this.diff_payment;
 					// Sungas posa-0031: only the cash part rounds UP to the next N100.
-					if (payment.type === "Cash" && !isReturn) {
+					if (this.isCashLikePayment(payment) && !isReturn) {
 						amount = this.sungasRoundCash(amount);
 						const extra = Math.round((amount - this.diff_payment) * 100) / 100;
 						if (extra > 0) {
@@ -2904,18 +2903,16 @@ export default {
 			}
 
 			const configuredCashMOP = String(this.pos_profile?.posa_cash_mode_of_payment || "").toLowerCase();
-
-			const type = String(payment.type || "").toLowerCase();
-			if (type === "cash") {
-				return true;
-			}
-
 			const mode = String(payment.mode_of_payment || "").toLowerCase();
 			if (configuredCashMOP && mode === configuredCashMOP) {
 				return true;
 			}
-
-			return mode.includes("cash");
+			// Sungas posa-0035: the till marks every payment row type "Cash" (POS / Transfer too), so the
+			// name decides; type only when there is no name.
+			if (mode) {
+				return mode.includes("cash");
+			}
+			return String(payment.type || "").toLowerCase() === "cash";
 		},
 		updateCreditChange(rawValue) {
 			const changeLimit = Math.max(-this.diff_payment, 0);
