@@ -54,20 +54,9 @@ export function usePosShift(openDialog) {
 						console.error("Failed to cache opening data", e);
 					}
 				} else {
-					const data = getOpeningStorage();
-					if (data) {
-						pos_profile.value = data.pos_profile;
-						pos_opening_shift.value = data.pos_opening_shift;
-						eventBus?.emit("register_pos_profile", data);
-						eventBus?.emit("set_company", data.company);
-						try {
-							frappe.realtime.emit("pos_profile_registered");
-						} catch (e) {
-							console.warn("Realtime emit failed", e);
-						}
-						console.info("LoadPosProfile (cached)");
-						return;
-					}
+					// Patch 0038: server says no open shift -- drop the saved (closed) shift, never sell on it.
+					clearOpeningStorage();
+					pos_opening_shift.value = null;
 					openDialog && openDialog();
 				}
 			})

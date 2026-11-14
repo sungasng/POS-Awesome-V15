@@ -486,6 +486,7 @@ import UpdateCustomer from "../pos/UpdateCustomer.vue";
 import {
 	getOpeningStorage,
 	setOpeningStorage,
+	clearOpeningStorage,
 	initPromise,
 	checkDbHealth,
 	saveOfflinePayment,
@@ -739,28 +740,8 @@ export default {
 					this.get_outstanding_invoices();
 					this.get_draft_mpesa_payments_register();
 				} else {
-					const cachedData = getOpeningStorage();
-					if (cachedData) {
-						this.pos_profile = cachedData.pos_profile;
-						this.pos_opening_shift = cachedData.pos_opening_shift;
-						this.company = cachedData.company.name;
-						this.companyCurrency = cachedData.company?.default_currency;
-						vm.eventBus.emit("payments_register_pos_profile", cachedData);
-						vm.eventBus.emit("set_company", cachedData.company);
-						
-						this.set_payment_methods();
-						await this.loadPaymentMethodCurrencies(); // Now works with await
-						
-						this.payment_methods_list = [];
-						this.pos_profile.payments.forEach((element) => {
-							this.payment_methods_list.push(element.mode_of_payment);
-						});
-						
-						this.get_available_pos_profiles();
-						this.get_outstanding_invoices();
-						this.get_draft_mpesa_payments_register();
-						return;
-					}
+					// Patch 0038: server says no open shift -- drop the saved (closed) shift.
+					clearOpeningStorage();
 					this.create_opening_voucher();
 				}
 			} catch (error) {
