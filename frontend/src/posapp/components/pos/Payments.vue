@@ -2142,6 +2142,12 @@ export default {
 		sungasRoundCashPart() {
 			const pays = this.invoice_doc.payments || [];
 			const cash = pays.filter((p) => this.isCashLikePayment(p) && this.flt(p.amount) > 0);
+			if (!cash.length && this.flt(this.invoice_doc.rounding_adjustment) >= 1) {
+				// no cash any more -> drop the cash rounding (bank / card are exact)
+				const g = this.flt(this.invoice_doc.grand_total);
+				this.invoice_doc.rounded_total = Math.round(g);
+				this.invoice_doc.rounding_adjustment = Math.round((Math.round(g) - g) * 100) / 100;
+			}
 			if (cash.length !== 1) return;
 			const nonCash = pays.filter((p) => !cash.includes(p)).reduce((t, p) => t + this.flt(p.amount), 0);
 			const grand = this.flt(this.invoice_doc.grand_total);
@@ -2830,6 +2836,9 @@ export default {
 			});
 		},
 		autoBalancePayments(excludePayment) {
+			// Sungas posa-0036: show the cash rounding on screen as soon as amounts change.
+			const isRet = this.invoice_doc.is_return || this.invoiceType === "Return";
+			if (!isRet) this.sungasRoundCashPart();
 			// Auto-subtract from other payments if we have an excess
 			const invoice_total = this.invoice_doc.rounded_total || this.invoice_doc.grand_total;
 
@@ -2841,8 +2850,11 @@ export default {
 			if (excess > 0) {
 				// Find other payments with amount > 0 to reduce
 				// We filter out the current payment being edited to avoid circular issues
+				// Sungas posa-0036: never change POS / Transfer amounts (they must match the terminal / bank);
+				// extra cash is change. Only cash rows are reduced, and only when a non-cash amount was edited.
 				const otherPayments = this.invoice_doc.payments.filter(
-					(p) => p !== excludePayment && this.flt(p.amount) > 0,
+					(p) => p !== excludePayment && this.flt(p.amount) > 0 &&
+						(isRet || (this.isCashLikePayment(p) && !this.isCashLikePayment(excludePayment))),
 				);
 
 				// Sort by amount descending to reduce larger chunks first
@@ -2868,6 +2880,7 @@ export default {
 
 					remaining_excess = this.flt(remaining_excess - reduction, this.currency_precision);
 				}
+				if (!isRet) this.sungasRoundCashPart();
 			}
 		},
 		getVisibleDenominations(payment) {
