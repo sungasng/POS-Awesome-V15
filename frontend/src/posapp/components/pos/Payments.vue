@@ -541,6 +541,18 @@
 							class="my-0 pa-1"
 						></v-switch>
 					</v-col>
+					<v-col cols="12" v-if="invoice_doc && !invoice_doc.is_return">
+						<v-text-field
+							density="compact"
+							variant="outlined"
+							v-model="sungas_receipt_email"
+							:label="frappe._('Email receipt to (optional)')"
+							prepend-inner-icon="mdi-email-outline"
+							hide-details
+							clearable
+							data-testid="pos-receipt-email"
+						></v-text-field>
+					</v-col>
 					<v-col
 						cols="6"
 						v-if="invoice_doc && pos_profile.posa_allow_credit_sale && !invoice_doc.is_return"
@@ -881,6 +893,7 @@ export default {
 			credit_due_presets: [7, 14, 30], // Preset options for due days
 			return_valid_upto_date: null, // Return valid until display date
 			customer_info: "", // Customer info
+			sungas_receipt_email: "",
 			mpesa_modes: [], // List of available M-Pesa modes
 			sales_persons: [], // List of sales persons
 			sales_person: "", // Selected sales person
@@ -1403,6 +1416,7 @@ export default {
 		},
 		customerInfoFromStore(newInfo) {
 			this.customer_info = newInfo || "";
+			this.sungas_receipt_email = (newInfo && newInfo.email_id) || "";
 		},
 		selectedCustomer(newCustomer, oldCustomer) {
 			if (newCustomer === oldCustomer) {
@@ -1930,6 +1944,14 @@ export default {
 
 				if (print) {
 					this.load_print_page();
+				}
+				// Sungas posa-0032: optional email copy (saved on the customer when they had none).
+				if (this.sungas_receipt_email && !this.invoice_doc.is_return) {
+					const inv = this.invoice_doc.name;
+					const email = this.sungas_receipt_email;
+					frappe.call({ method: "sungas.pos_sale_rules.email_receipt", args: { invoice: inv, email } })
+						.then(() => this.eventBus.emit("show_message", { title: __("Receipt emailed to {0}", [email]), color: "success" }))
+						.catch(() => this.eventBus.emit("show_message", { title: __("Receipt could not be emailed to {0}", [email]), color: "warning" }));
 				}
 				this.customer_credit_dict = [];
 				this.redeem_customer_credit = false;

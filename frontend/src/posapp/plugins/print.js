@@ -253,6 +253,31 @@ async function fallbackToOfflinePrint(invoiceDoc, existingWindow, options = {}) 
 	}
 }
 
+// Sungas posa-0032: one print per pop-up -- after printing, blank the page and close the window so the
+// same receipt cannot be printed again from it (every new print goes through the ERP's ORIGINAL/DUPLICATE check).
+function sungasPrintOnce(targetWindow) {
+	try {
+		targetWindow.focus();
+		targetWindow.print();
+	} finally {
+		try {
+			const d = targetWindow.document;
+			d.body.innerHTML =
+				'<div style="font:14px Arial;padding:20px;text-align:center">Receipt sent to the printer.<br>This window closes automatically.</div>';
+			d.title = "Printed";
+		} catch (e) {
+			/* cross-origin or already closed */
+		}
+		setTimeout(() => {
+			try {
+				if (targetWindow !== window && !targetWindow.frameElement) targetWindow.close();
+			} catch (e) {
+				/* ignore */
+			}
+		}, 300);
+	}
+}
+
 async function ensureReadyAndPrint(targetWindow, options = {}) {
 	if (!targetWindow) {
 		return;
@@ -307,8 +332,7 @@ async function ensureReadyAndPrint(targetWindow, options = {}) {
 			note: "Print target ready",
 		});
 		if (resolvedShouldPrint) {
-			targetWindow.focus();
-			targetWindow.print();
+			sungasPrintOnce(targetWindow);
 		}
 	} catch (err) {
 		console.warn("Print readiness check failed", err);
@@ -337,8 +361,7 @@ async function ensureReadyAndPrint(targetWindow, options = {}) {
 		}
 		if (!usedFallback && resolvedShouldPrint) {
 			try {
-				targetWindow.focus();
-				targetWindow.print();
+				sungasPrintOnce(targetWindow);
 			} catch (printErr) {
 				console.error("Printing failed after readiness check error", printErr);
 			}
