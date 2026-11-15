@@ -20,7 +20,8 @@ frappe.ui.form.on("POS Closing Shift", {
 			return { filters: { status: "Open", docstatus: 1 } };
 		});
 
-		if (frm.doc.docstatus === 0) frm.set_value("period_end_date", frappe.datetime.now_datetime());
+		// Sungas posa-0041: only a new close takes "now" -- approvers opening a draft must not move its end time.
+		if (frm.is_new()) frm.set_value("period_end_date", frappe.datetime.now_datetime());
 		if (frm.doc.docstatus === 1) set_html_data(frm);
 	},
 
