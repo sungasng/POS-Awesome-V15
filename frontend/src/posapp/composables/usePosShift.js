@@ -137,10 +137,19 @@ export function usePosShift(openDialog) {
 					// DISABLED: Auto-open new shift - cashier must manually open
 					// check_opening_entry();
 					
-					// Redirect to desk after shift close
-					setTimeout(() => {
-						window.location.href = '/app';
-					}, 4000);
+					// Sungas posa-0043: a close that opened a variance case stays on screen until the cashier acts.
+					frappe.db.get_value("POS Closing Shift", r.message, "pos_variance_investigation")
+						.then((v) => {
+							const pvi = v?.message?.pos_variance_investigation;
+							if (!pvi) return setTimeout(() => (window.location.href = "/app"), 4000);
+							frappe.msgprint({
+								title: __("Write your statement"),
+								indicator: "orange",
+								message: __("Your shift is closed. It has a large cash difference, so variance case <b>{0}</b> has been opened.<br><br>Write what happened, press <b>Save</b>, then <b>Sign my statement</b>. You can open your next shift now.", [pvi]),
+								primary_action: { label: __("Write my statement"), action: () => (window.location.href = `/app/pos-variance-investigation/${pvi}`) },
+							});
+						})
+						.catch(() => setTimeout(() => (window.location.href = "/app"), 4000));
 				}
 			});
 	}
