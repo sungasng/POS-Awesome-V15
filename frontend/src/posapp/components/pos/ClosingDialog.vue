@@ -858,7 +858,7 @@
 								</div>
 								<div class="text-caption mt-1">
 									{{ varianceSeverity === 'block'
-										? __("Variance is large and requires manager approval before submission. Please record the explanation below; a manager must approve from the back office.")
+										? __("The difference is large. Write what happened below and submit - your shift will close and a variance case opens for your statement. You can open your next shift straight away.")
 										: __("Please explain the variance below. Your remarks will be saved with the closing shift and reviewed by Accounts.") }}
 								</div>
 							</v-alert>
