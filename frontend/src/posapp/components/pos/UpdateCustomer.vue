@@ -151,13 +151,14 @@
 							<!-- Territory - ALWAYS VISIBLE -->
 							<v-col cols="6">
 								<v-autocomplete
-									clearable
+									data-testid="customer-territory-select"
 									density="compact"
 									auto-select-first
 									color="primary"
 									:label="frappe._('Territory') + ' *'"
 									v-model="territory"
 									:items="territorys"
+									:readonly="!customer_id && territorys.length <= 1"
 									class="pos-themed-input"
 									:no-data-text="__('Territory not found')"
 									hide-details
@@ -491,8 +492,9 @@ export default {
 			this.referral_code = "";
 			this.birthday = "";
 			this.group = "Retail"; // Sungas posa-0021: new customers start as Retail
-			this.territory = frappe.defaults.get_user_default("Territory");
 			this.customer_id = "";
+			this.territory = "";
+			this.getCustomerTerritorys();
 			this.customer_type = "Individual";
 			this.gender = "";
 			this.loyalty_points = null;
@@ -517,22 +519,14 @@ export default {
 				});
 		},
 		getCustomerTerritorys() {
-			if (this.territorys.length > 0) return;
-			const vm = this;
-			frappe.db
-				.get_list("Territory", {
-					fields: ["name"],
-					filters: { is_group: 0 },
-					limit: 5000,
-					order_by: "name",
-				})
-				.then((data) => {
-					if (data.length > 0) {
-						data.forEach((el) => {
-							vm.territorys.push(el.name);
-						});
-					}
-				});
+			// Sungas posa-0044: a till lists only its own territory (POS Territory Table, else its plant).
+			const p = this.pos_profile || {};
+			const rows = (p.pos_territory_table || []).map((r) => r.territory).filter(Boolean);
+			const plant = (p.warehouse || "").replace(/ - [^-]+$/, "");
+			this.territorys = rows.length ? rows : plant ? [plant] : [];
+			if (!this.customer_id && !this.territorys.includes(this.territory)) {
+				this.territory = this.territorys[0] || "";
+			}
 		},
 		getGenders() {
 			const vm = this;
@@ -676,6 +670,19 @@ export default {
 			frappe.call({
 				method: "posawesome.posawesome.api.customers.create_customer",
 				args: apiArgs,
+				// Sungas posa-0044: show the reason on the till (the desk pop-up opened behind this dialog).
+				error: (r) => {
+					frappe.utils.play_sound("error");
+					let msg = __("Customer creation failed.");
+					try {
+						const m = JSON.parse(r._server_messages || "[]").map((x) => JSON.parse(x).message);
+						if (m.length) msg = m.join(" ").replace(/<[^>]+>/g, "").trim();
+					} catch (e) {
+						/* keep default */
+					}
+					setTimeout(() => document.querySelectorAll(".modal.show .btn-modal-close, .modal.show .close").forEach((b) => b.click()), 50);
+					vm.eventBus.emit("show_message", { title: msg, color: "error" });
+				},
 				callback: async (r) => {
 					if (!r.exc && r.message.name) {
 						let text = __("Customer created successfully.");
@@ -757,6 +764,7 @@ export default {
 				this.birthday = data.birthday;
 				this.group = data.customer_group;
 				this.territory = data.territory;
+				if (data.territory && !this.territorys.includes(data.territory)) this.territorys = [...this.territorys, data.territory];
 				this.loyalty_points = data.loyalty_points;
 				this.loyalty_program = data.loyalty_program;
 				this.gender = data.gender;
@@ -777,16 +785,17 @@ export default {
 		this.eventBus.on("register_pos_profile", (data) => {
 			this.pos_profile = data.pos_profile;
 			this.country = (this.pos_profile && this.pos_profile.posa_default_country) || "Nigeria";
+			this.getCustomerTerritorys();
 		});
 		this.eventBus.on("payments_register_pos_profile", (data) => {
 			this.pos_profile = data.pos_profile;
 			this.country = (this.pos_profile && this.pos_profile.posa_default_country) || "Nigeria";
+			this.getCustomerTerritorys();
 		});
 		this.getCustomerGroups();
 		this.getCustomerTerritorys();
 		this.getGenders();
 		this.group = "Retail"; // Sungas posa-0021: new customers start as Retail
-		this.territory = frappe.defaults.get_user_default("Territory");
 	},
 };
 </script>

@@ -186,6 +186,22 @@ def get_customer_info(customer):
     return res
 
 
+def _till_territories(pos_profile_name):
+    """Sungas posa-0044: territories a till may create customers in (POS Territory Table, else the till's plant)."""
+    if not pos_profile_name:
+        return []
+    if frappe.db.exists("DocType", "POS Territory Table"):
+        rows = frappe.get_all(
+            "POS Territory Table",
+            filters={"parent": pos_profile_name, "parenttype": "POS Profile"},
+            pluck="territory",
+        )
+        if rows:
+            return rows
+    plant = (frappe.db.get_value("POS Profile", pos_profile_name, "warehouse") or "").rsplit(" - ", 1)[0]
+    return [plant] if plant and frappe.db.exists("Territory", plant) else []
+
+
 @frappe.whitelist()
 def create_customer(
     customer_name,
@@ -225,7 +241,11 @@ def create_customer(
             frappe.log_error(f"Error formatting birthday: {birthday}", "POS Awesome")
 
     if method == "create":
-        is_exist = frappe.db.exists("Customer", {"customer_name": customer_name})
+        allowed = _till_territories(pos_profile.get("name"))
+        if allowed and territory not in allowed:
+            territory = allowed[0]
+        # Same name is fine at another plant; mobile + territory is checked by Sungas.
+        is_exist = frappe.db.exists("Customer", {"customer_name": customer_name, "territory": territory})
         if pos_profile.get("posa_allow_duplicate_customer_names") or not is_exist:
             customer = frappe.get_doc(
                 {
@@ -268,7 +288,11 @@ def create_customer(
 
             return customer
         else:
-            frappe.throw(_("Customer already exists"))
+            frappe.throw(
+                _("A customer named {0} already exists at {1}. Search for her in the customer box instead.").format(
+                    customer_name, territory
+                )
+            )
 
     elif method == "update":
         customer_doc = frappe.get_doc("Customer", customer_id)
