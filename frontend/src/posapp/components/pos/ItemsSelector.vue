@@ -109,7 +109,7 @@
 								@focus="clearQty"
 							></v-text-field>
 						</v-col>
-						<v-col cols="2" class="pb-0" v-if="pos_profile.posa_new_line">
+						<v-col cols="2" class="pb-0" v-if="pos_profile.posa_new_line && !simpleTill">
 							<v-checkbox
 								v-model="new_line"
 								color="accent"
@@ -119,7 +119,7 @@
 								hide-details
 							></v-checkbox>
 						</v-col>
-						<v-col cols="12" class="dynamic-margin-xs">
+						<v-col cols="12" class="dynamic-margin-xs" v-if="!simpleTill">
 							<div class="settings-container">
 								<v-btn
 									density="compact"
@@ -536,7 +536,7 @@
 				</v-row>
 			</div>
 		</v-card>
-		<v-card class="cards mb-0 mt-3 dynamic-padding resizable" style="resize: vertical; overflow: auto">
+		<v-card v-if="!simpleTill" class="cards mb-0 mt-3 dynamic-padding resizable" style="resize: vertical; overflow: auto">
 			<v-row no-gutters align="center" justify="center" class="dynamic-spacing-sm">
 				<v-col cols="12" class="mb-2">
 					<v-select
@@ -4531,6 +4531,7 @@ export default {
 	},
 
 	computed: {
+		simpleTill: () => isSimpleTill(),
 		memoizedFormatCurrency() {
 			return (value, currency, precision) => {
 				const prec = precision ?? this.currency_precision ?? 2;

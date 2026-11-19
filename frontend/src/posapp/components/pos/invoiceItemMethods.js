@@ -4794,16 +4794,22 @@ export default {
 			await this.calc_uom(line, pick.uom);
 			return;
 		}
-		if (this.customer) await this.apply_tier_pricing_to_cart();
-		const rate = this.flt(line.rate);
-		if (!rate) {
-			this.eventBus.emit("show_message", { title: __("Pick the customer first so the kg price is known."), color: "warning" });
-			return;
+		// Part fill: the pad already says which cylinder it goes into.
+		if (pick.fill_into) line.sungas_fill_into = pick.fill_into;
+		let kg = this.flt(pick.kg, 3);
+		if (!kg) {
+			if (this.customer) await this.apply_tier_pricing_to_cart();
+			const rate = this.flt(line.rate);
+			if (!rate) {
+				this.eventBus.emit("show_message", { title: __("Pick the customer first so the kg price is known."), color: "warning" });
+				return;
+			}
+			kg = this.flt(this.flt(pick.amount) / rate, 3);
 		}
-		const kg = this.flt(this.flt(pick.amount) / rate, 3);
 		this.setFormatedQty(line, "qty", 3, false, kg);
+		if (this.customer) await this.apply_tier_pricing_to_cart();
 		this.eventBus.emit("show_message", {
-			title: __("{0} kg of LPG for ₦{1}. Pick which cylinder it goes into.", [kg, pick.amount]),
+			title: __("{0} kg into {1} added.", [kg, (pick.fill_into || "").replace("kg Cyl", " kg cylinder")]),
 			color: "info",
 		});
 	},

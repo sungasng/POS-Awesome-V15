@@ -341,6 +341,7 @@ import CancelSaleDialog from "./CancelSaleDialog.vue";
 import InvoiceSummary from "./InvoiceSummary.vue";
 import ItemsTable from "./ItemsTable.vue";
 import invoiceItemMethods from "./invoiceItemMethods";
+import { isSimpleTill } from "../../composables/sungasTill.js";
 import invoiceComputed from "./invoiceComputed";
 import invoiceWatchers from "./invoiceWatchers";
 import offerMethods from "./invoiceOfferMethods";
@@ -534,6 +535,10 @@ export default {
 				{ title: __("Actions"), key: "actions", align: "center", required: true, sortable: false },
 			];
 
+			// Sungas posa-0047: cashiers see only Item, Qty, Size, Rate, Amount and the line actions.
+			if (isSimpleTill()) {
+				this.selected_columns = this.available_columns.filter((c) => c.required).map((c) => c.key);
+			}
 			// Initialize selected columns if empty
 			if (!this.selected_columns || this.selected_columns.length === 0) {
 				// By default, select all required columns and those enabled in POS profile
