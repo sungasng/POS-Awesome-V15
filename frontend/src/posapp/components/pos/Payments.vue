@@ -14,6 +14,17 @@
 			></v-progress-linear>
 			<div ref="paymentContainer" class="overflow-y-auto pa-2" style="max-height: 67vh">
 				<!-- Payment Summary (Paid, To Be Paid, Change) -->
+				<!-- Sungas posa-0045: cash rounding is part of the payment terms. -->
+				<v-alert
+					v-if="invoice_doc"
+					type="info"
+					variant="tonal"
+					density="compact"
+					class="mx-1 mb-1 text-body-2"
+					data-testid="cash-rounding-notice"
+				>
+					{{ __("Cash is rounded up to the nearest ₦100; no change is given and the rounded amount cannot be claimed. Ask the customer to pay by transfer or card to pay the exact amount.") }}
+				</v-alert>
 				<v-row v-if="invoice_doc" class="pa-1" dense>
 					<v-col cols="7">
 						<v-text-field

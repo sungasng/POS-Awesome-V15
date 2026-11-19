@@ -118,6 +118,23 @@
 					</div>
 				</v-list-item>
 
+				<!-- Sungas posa-0045: cashiers ask Finance to cancel a receipt (they cannot cancel it themselves). -->
+				<v-list-item @click="requestCancellation" class="menu-item-compact secondary-action" data-testid="menu-request-cancellation">
+					<template v-slot:prepend>
+						<div class="menu-icon-wrapper-compact secondary-icon">
+							<v-icon color="white" size="16">mdi-file-cancel-outline</v-icon>
+						</div>
+					</template>
+					<div class="menu-content-compact">
+						<v-list-item-title class="menu-item-title-compact">{{
+							__("Request receipt cancellation")
+						}}</v-list-item-title>
+						<v-list-item-subtitle class="menu-item-subtitle-compact">{{
+							__("Finance approves it")
+						}}</v-list-item-subtitle>
+					</div>
+				</v-list-item>
+
 				<v-list-item @click="$emit('sync-invoices')" class="menu-item-compact info-action">
 					<template v-slot:prepend>
 						<div class="menu-icon-wrapper-compact info-icon">
@@ -444,6 +461,23 @@ export default {
 		this.initializeWesternNumerals();
 	},
 	methods: {
+		requestCancellation() {
+			frappe.prompt(
+				[
+					{ fieldname: "invoice", fieldtype: "Link", options: "POS Invoice", label: __("Receipt No"), reqd: 1,
+					  default: this.lastInvoiceId || "" },
+					{ fieldname: "reason", fieldtype: "Small Text", label: __("Why should this receipt be cancelled?"), reqd: 1 },
+				],
+				(v) =>
+					frappe.call({
+						method: "sungas.receipt_cancel.request",
+						args: { invoice: v.invoice, reason: v.reason },
+						callback: (r) => frappe.msgprint(r.message.message),
+					}),
+				__("Request receipt cancellation"),
+				__("Send to Finance"),
+			);
+		},
 		initializeWesternNumerals() {
 			try {
 				const stored = localStorage.getItem("use_western_numerals");

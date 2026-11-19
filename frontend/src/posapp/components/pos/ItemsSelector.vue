@@ -48,6 +48,7 @@
 			<!-- Add dynamic-padding wrapper like Invoice component -->
 			<div class="dynamic-padding">
 				<div class="sticky-header">
+					<LpgQuickSell @pick="quickLpg" />
 					<v-row class="items">
 						<v-col class="pb-0">
 							<v-text-field
@@ -615,6 +616,7 @@
 import format from "../../format";
 import _ from "lodash";
 import CameraScanner from "./CameraScanner.vue";
+import LpgQuickSell from "./LpgQuickSell.vue";
 import { ensurePosProfile } from "../../../utils/pos_profile.js";
 import "vue-virtual-scroller/dist/vue-virtual-scroller.css";
 import { RecycleScroller } from "vue-virtual-scroller";
@@ -689,6 +691,7 @@ export default {
 	},
 	components: {
 		CameraScanner,
+		LpgQuickSell,
 		Skeleton,
 		RecycleScroller,
 	},
@@ -2096,6 +2099,16 @@ export default {
 				placeholder.remove();
 			}
 			await this.add_item(item);
+		},
+		// Sungas posa-0045: one-tap cylinder refill or a naira amount of LPG.
+		async quickLpg(pick) {
+			const base = (this.items || []).find((i) => i.item_code === "LPG-REFILL");
+			if (!base) {
+				this.eventBus.emit("show_message", { title: __("LPG refill is not set up for this till."), color: "error" });
+				return;
+			}
+			this.qty = 1;
+			await this.add_item({ ...base, _sungas_pick: pick });
 		},
 		async add_item(item, options = {}) {
 			const { suppressNegativeWarning = false } = options;

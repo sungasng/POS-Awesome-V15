@@ -1417,6 +1417,7 @@ export default {
 		};
 		const res = await addItem(item, this);
 		this.schedulePricingRuleApplication();
+		if (item?._sungas_pick) await this.sungas_apply_pick(item._sungas_pick);
 		this._logPriceListDebug("add_item", {
 			...priceContext,
 			item_after: this._buildPriceListSnapshot([item]),
@@ -4774,6 +4775,29 @@ export default {
 	},
 
 	// Update UOM (unit of measure) for an item and recalculate prices
+	// Sungas posa-0045: finish a quick LPG tap -- set the cylinder size, or work out the kg from a naira amount.
+	async sungas_apply_pick(pick) {
+		const line = (this.items || []).find((l) => l._sungas_pick === pick);
+		if (!line) return;
+		delete line._sungas_pick;
+		if (pick.uom) {
+			await this.calc_uom(line, pick.uom);
+			return;
+		}
+		if (this.customer) await this.apply_tier_pricing_to_cart();
+		const rate = this.flt(line.rate);
+		if (!rate) {
+			this.eventBus.emit("show_message", { title: __("Pick the customer first so the kg price is known."), color: "warning" });
+			return;
+		}
+		const kg = this.flt(this.flt(pick.amount) / rate, 3);
+		this.setFormatedQty(line, "qty", 3, false, kg);
+		this.eventBus.emit("show_message", {
+			title: __("{0} kg of LPG for ₦{1}. Pick which cylinder it goes into.", [kg, pick.amount]),
+			color: "info",
+		});
+	},
+
 	calc_uom(item, value) {
 		if (!item) {
 			return;
