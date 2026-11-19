@@ -1415,9 +1415,15 @@ export default {
 			invoice_selling_price_list: this.invoice_doc?.selling_price_list || null,
 			item_before: this._buildPriceListSnapshot([item]),
 		};
+		// Sungas posa-0046: the cart stores copies, so find the quick-LPG line by the row it added.
+		const pick = item?._sungas_pick;
+		const before = pick ? new Set((this.items || []).map((l) => l.posa_row_id)) : null;
+		const keepNewLine = this.new_line;
+		if (pick) this.new_line = true; // a tap is always its own line
 		const res = await addItem(item, this);
+		if (pick) this.new_line = keepNewLine;
 		this.schedulePricingRuleApplication();
-		if (item?._sungas_pick) await this.sungas_apply_pick(item._sungas_pick);
+		if (pick) await this.sungas_apply_pick(pick, item.item_code, before);
 		this._logPriceListDebug("add_item", {
 			...priceContext,
 			item_after: this._buildPriceListSnapshot([item]),
@@ -4776,8 +4782,12 @@ export default {
 
 	// Update UOM (unit of measure) for an item and recalculate prices
 	// Sungas posa-0045: finish a quick LPG tap -- set the cylinder size, or work out the kg from a naira amount.
-	async sungas_apply_pick(pick) {
-		const line = (this.items || []).find((l) => l._sungas_pick === pick);
+	async sungas_apply_pick(pick, itemCode, before) {
+		let line = null;
+		for (let i = 0; i < 20 && !line; i++) {
+			line = (this.items || []).find((l) => l.item_code === itemCode && !before.has(l.posa_row_id));
+			if (!line) await new Promise((r) => setTimeout(r, 50));
+		}
 		if (!line) return;
 		delete line._sungas_pick;
 		if (pick.uom) {
