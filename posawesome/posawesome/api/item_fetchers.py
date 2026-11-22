@@ -110,31 +110,50 @@ def get_item_prices(
     return cached(price_list, currency, tuple(item_codes), customer or "", today or nowdate())
 
 
+def open_till_qty(warehouses: Sequence[str], item_codes: Sequence[str]) -> Dict[str, float]:
+    """Sungas posa-0048: {item: stock qty sold at the till (not returns) and not yet closed into a Sales Invoice}."""
+    if not warehouses or not item_codes:
+        return {}
+    rows = frappe.db.sql(
+        """select x.item_code, sum(x.qty) as qty from (
+            select it.item_code, it.warehouse, it.stock_qty as qty from `tabPOS Invoice` p
+              join `tabPOS Invoice Item` it on it.parent = p.name
+             where p.docstatus = 1 and p.is_return = 0 and ifnull(p.consolidated_invoice, '') = ''
+            union all
+            select pk.item_code, pk.warehouse, pk.qty * ifnull(pk.conversion_factor, 1) from `tabPOS Invoice` p
+              join `tabPacked Item` pk on pk.parent = p.name and pk.parenttype = 'POS Invoice'
+             where p.docstatus = 1 and p.is_return = 0 and ifnull(p.consolidated_invoice, '') = '') x
+        where x.warehouse in %(whs)s and x.item_code in %(items)s group by x.item_code""",
+        {"whs": tuple(warehouses), "items": tuple(item_codes)},
+        as_dict=True,
+    )
+    return {r.item_code: flt(r.qty) for r in rows}
+
+
 def _fetch_bin_qty(warehouse: str, item_codes: Tuple[str, ...]):
-    """Return stock quantities for each item, expanding warehouse groups."""
+    """Return stock available now per item (recorded less till sales not yet closed), expanding warehouse groups."""
 
     if not item_codes or not warehouse:
         return []
 
+    warehouses = [warehouse]
     if frappe.db.get_value("Warehouse", warehouse, "is_group"):
         warehouses = frappe.db.get_descendants("Warehouse", warehouse) or []
         if not warehouses:
             return []
-        bin_doctype = DocType("Bin")
-        return (
-            frappe.qb.from_(bin_doctype)
-            .select(bin_doctype.item_code, Sum(bin_doctype.actual_qty).as_("actual_qty"))
-            .where(bin_doctype.warehouse.isin(warehouses))
-            .where(bin_doctype.item_code.isin(item_codes))
-            .groupby(bin_doctype.item_code)
-            .run(as_dict=True)
-        )
-
-    return frappe.get_all(
-        "Bin",
-        fields=["item_code", "actual_qty"],
-        filters={"warehouse": warehouse, "item_code": ["in", item_codes]},
+    bin_doctype = DocType("Bin")
+    rows = (
+        frappe.qb.from_(bin_doctype)
+        .select(bin_doctype.item_code, Sum(bin_doctype.actual_qty).as_("actual_qty"))
+        .where(bin_doctype.warehouse.isin(warehouses))
+        .where(bin_doctype.item_code.isin(item_codes))
+        .groupby(bin_doctype.item_code)
+        .run(as_dict=True)
     )
+    held = open_till_qty(warehouses, [r.item_code for r in rows])
+    for r in rows:
+        r.actual_qty = flt(r.actual_qty) - held.get(r.item_code, 0)
+    return rows
 
 
 def get_bin_qty(warehouse: Optional[str], item_codes: Sequence[str], ttl: Optional[int] = None):

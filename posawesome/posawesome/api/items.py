@@ -19,7 +19,7 @@ from frappe.utils import cint, cstr, flt, get_datetime, nowdate
 from frappe.utils.background_jobs import enqueue
 from frappe.utils.caching import redis_cache
 
-from .item_fetchers import ItemDetailAggregator, get_batches
+from .item_fetchers import ItemDetailAggregator, get_batches, open_till_qty
 from .utils import (
     HAS_VARIANTS_EXCLUSION,
     expand_item_groups,
@@ -150,7 +150,9 @@ def get_stock_availability(item_code, warehouse):
         .run(as_dict=True)
     )
 
-    return flt(rows[0].actual_qty) if rows else 0.0
+    # Sungas posa-0048: available now = recorded less till sales not yet closed.
+    recorded = flt(rows[0].actual_qty) if rows else 0.0
+    return recorded - open_till_qty(warehouses, [item_code]).get(item_code, 0)
 
 
 @frappe.whitelist()
@@ -223,7 +225,8 @@ def get_bulk_stock_availability(items):
         )
 
         rows = query.run(as_dict=True)
-        qty_map = {r.item_code: flt(r.actual_qty) for r in rows}
+        held = open_till_qty(target_warehouses, item_code_list)  # Sungas posa-0048
+        qty_map = {r.item_code: flt(r.actual_qty) - held.get(r.item_code, 0) for r in rows}
 
         for code in item_codes:
             results[(code, warehouse, "")] = qty_map.get(code, 0.0)

@@ -2,6 +2,10 @@
 
 All notable changes.
 
+Sungas posa-0048 — November 2026
+### 🐞 Bug Fixes
+- till tiles and the quantity limit now use stock available now (recorded less till sales not yet closed), so a plant cannot sell the same kg twice before the till closes — see `docs/features/02_stock_available_now.md`
+
 Release 15.18.0 — January 17, 2026
 ### ✨ Features
 - add multi-currency payment support with custom exchange rates 
